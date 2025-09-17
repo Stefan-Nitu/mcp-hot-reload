@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawn, ChildProcess, execSync } from 'child_process';
-import { watch, FSWatcher } from 'fs';
+import * as chokidar from 'chokidar';
 import { Readable, Writable } from 'stream';
 import { MessageParser } from './message-parser.js';
 import { SessionManager } from './session-manager.js';
@@ -8,7 +8,7 @@ import { ProxyConfig, JSONRPCMessage } from './types.js';
 
 export class MCPHotReload {
   private serverProcess: ChildProcess | null = null;
-  private watchers: FSWatcher[] = [];
+  private watcher: chokidar.FSWatcher | null = null;
   private debounceTimer: NodeJS.Timeout | null = null;
   private timeoutInterval: NodeJS.Timeout | null = null;
   private messageParser = new MessageParser();
@@ -213,22 +213,36 @@ export class MCPHotReload {
       ? this.config.watchPattern
       : [this.config.watchPattern];
 
-    patterns.forEach(pattern => {
-      const watcher = watch(pattern, { recursive: true });
+    // Use chokidar for cross-platform file watching
+    this.watcher = chokidar.watch(patterns, {
+      ignored: /(^|[\/\\])\../, // ignore dotfiles
+      persistent: true,
+      ignoreInitial: true
+    });
 
-      watcher.on('change', (_eventType, filename) => {
-        const filenameStr = filename?.toString();
-        if (filenameStr && (filenameStr.endsWith('.ts') || filenameStr.endsWith('.js'))) {
-          if (this.debounceTimer) {
-            clearTimeout(this.debounceTimer);
-          }
-          this.debounceTimer = setTimeout(() => {
-            this.restartServer();
-          }, this.config.debounceMs);
+    this.watcher.on('change', (path: string) => {
+      if (path.endsWith('.ts') || path.endsWith('.js')) {
+        if (this.debounceTimer) {
+          clearTimeout(this.debounceTimer);
         }
-      });
+        this.debounceTimer = setTimeout(() => {
+          this.restartServer();
+        }, this.config.debounceMs);
+      }
+    });
 
-      this.watchers.push(watcher);
+    this.watcher.on('add', (path: string) => {
+      if (path.endsWith('.ts') || path.endsWith('.js')) {
+        if (this.debounceTimer) {
+          clearTimeout(this.debounceTimer);
+        }
+        this.debounceTimer = setTimeout(() => {
+          this.restartServer();
+        }, this.config.debounceMs);
+      }
+    });
+
+    patterns.forEach(pattern => {
       this.stderr.write(`[mcp-hot-reload] Watching ${pattern} for changes...\n`);
     });
   }
@@ -258,8 +272,10 @@ export class MCPHotReload {
       clearInterval(this.timeoutInterval);
       this.timeoutInterval = null;
     }
-    this.watchers.forEach(watcher => watcher.close());
-    this.watchers = [];
+    if (this.watcher) {
+      this.watcher.close();
+      this.watcher = null;
+    }
     if (this.serverProcess) {
       this.serverProcess.kill('SIGTERM');
       this.serverProcess = null;

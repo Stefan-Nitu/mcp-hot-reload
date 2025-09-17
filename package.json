@@ -1,6 +1,6 @@
 {
   "name": "mcp-hot-reload",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Hot-reload development tool for MCP (Model Context Protocol) servers with session preservation",
   "main": "dist/mcp-hot-reload.js",
   "type": "module",
@@ -25,11 +25,15 @@
   "license": "MIT",
   "devDependencies": {
     "@modelcontextprotocol/sdk": "^1.18.0",
+    "@types/chokidar": "^1.7.5",
     "@types/jest": "^29.5.14",
     "@types/node": "^22.10.7",
     "jest": "^29.7.0",
     "ts-jest": "^29.2.5",
     "ts-node": "^10.9.2",
     "typescript": "^5.7.3"
+  },
+  "dependencies": {
+    "chokidar": "^4.0.3"
   }
 }
