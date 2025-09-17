@@ -1,4 +1,6 @@
-# ![NPM Version](https://img.shields.io/npm/v/mcp-hot-reload) ![MIT licensed](https://img.shields.io/npm/l/mcp-hot-reload) ![Build Status](https://github.com/Stefan-Nitu/mcp-hot-reload/actions/workflows/test.yml/badge.svg) &nbsp; MCP Hot Reload
+![NPM Version](https://img.shields.io/npm/v/mcp-hot-reload) ![MIT licensed](https://img.shields.io/npm/l/mcp-hot-reload) ![Build Status](https://github.com/Stefan-Nitu/mcp-hot-reload/actions/workflows/test.yml/badge.svg)
+
+# MCP Hot Reload
 
 ## Table of Contents
 
