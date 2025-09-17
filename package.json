@@ -1,11 +1,11 @@
 {
-  "name": "mcp-dev-proxy",
-  "version": "0.2.0",
-  "description": "Robust hot-reload development proxy for MCP servers with session management",
-  "main": "dist/mcp-dev-proxy.js",
+  "name": "mcp-hot-reload",
+  "version": "1.0.0",
+  "description": "Hot-reload development tool for MCP (Model Context Protocol) servers with session preservation",
+  "main": "dist/mcp-hot-reload.js",
   "type": "module",
   "bin": {
-    "mcp-dev-proxy": "dist/mcp-dev-proxy.js"
+    "mcp-hot-reload": "dist/mcp-hot-reload.js"
   },
   "scripts": {
     "build": "tsc",

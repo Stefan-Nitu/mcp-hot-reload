@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
-import { MCPDevProxy } from './mcp-dev-proxy.js';
+import { MCPHotReload } from './mcp-hot-reload.js';
 import { PassThrough } from 'stream';
 import { EventEmitter } from 'events';
 import { spawn, execSync } from 'child_process';
@@ -9,11 +9,11 @@ import { watch } from 'fs';
 jest.mock('child_process');
 jest.mock('fs');
 
-describe('MCPDevProxy Unit Tests', () => {
+describe('MCPHotReload Unit Tests', () => {
   let mockStdin: PassThrough;
   let mockStdout: PassThrough;
   let mockStderr: PassThrough;
-  let proxy: MCPDevProxy;
+  let proxy: MCPHotReload;
   let mockServerProcess: any;
   let mockWatcher: any;
 
@@ -78,7 +78,7 @@ describe('MCPDevProxy Unit Tests', () => {
   describe('Initialization and Configuration', () => {
     it('should initialize with default configuration', () => {
       // Arrange & Act
-      proxy = new MCPDevProxy({ onExit: () => {} }, mockStdin, mockStdout, mockStderr);
+      proxy = new MCPHotReload({ onExit: () => {} }, mockStdin, mockStdout, mockStderr);
 
       // Assert
       expect(proxy).toBeDefined();
@@ -99,7 +99,7 @@ describe('MCPDevProxy Unit Tests', () => {
       };
 
       // Act
-      proxy = new MCPDevProxy(customConfig, mockStdin, mockStdout, mockStderr);
+      proxy = new MCPHotReload(customConfig, mockStdin, mockStdout, mockStderr);
 
       // Assert
       expect((proxy as any).config.buildCommand).toBe('yarn build');
@@ -111,7 +111,7 @@ describe('MCPDevProxy Unit Tests', () => {
     it('should not start when MCP_DEV_MODE is child', () => {
       // Arrange
       process.env.MCP_DEV_MODE = 'child';
-      proxy = new MCPDevProxy({ onExit: () => {} }, mockStdin, mockStdout, mockStderr);
+      proxy = new MCPHotReload({ onExit: () => {} }, mockStdin, mockStdout, mockStderr);
 
       // Act
       proxy.start();
@@ -127,7 +127,7 @@ describe('MCPDevProxy Unit Tests', () => {
   describe('Message Handling', () => {
     it('should parse and handle incoming JSON-RPC messages', async () => {
       // Arrange
-      proxy = new MCPDevProxy({ onExit: () => {} }, mockStdin, mockStdout, mockStderr);
+      proxy = new MCPHotReload({ onExit: () => {} }, mockStdin, mockStdout, mockStderr);
       const handleSpy = jest.spyOn(proxy as any, 'handleIncomingData');
 
       // Act
@@ -141,7 +141,7 @@ describe('MCPDevProxy Unit Tests', () => {
 
     it('should forward server output to stdout', () => {
       // Arrange
-      proxy = new MCPDevProxy({ onExit: () => {} }, mockStdin, mockStdout, mockStderr);
+      proxy = new MCPHotReload({ onExit: () => {} }, mockStdin, mockStdout, mockStderr);
       const outputData: string[] = [];
       mockStdout.on('data', chunk => outputData.push(chunk.toString()));
 
@@ -156,7 +156,7 @@ describe('MCPDevProxy Unit Tests', () => {
 
     it('should forward server errors to stderr', async () => {
       // Arrange
-      proxy = new MCPDevProxy({ onExit: () => {} }, mockStdin, mockStdout, mockStderr);
+      proxy = new MCPHotReload({ onExit: () => {} }, mockStdin, mockStdout, mockStderr);
       const errorData: string[] = [];
       mockStderr.on('data', chunk => errorData.push(chunk.toString()));
 
@@ -180,7 +180,7 @@ describe('MCPDevProxy Unit Tests', () => {
         env: { TEST_VAR: 'value' },
         onExit: () => {}
       };
-      proxy = new MCPDevProxy(config, mockStdin, mockStdout, mockStderr);
+      proxy = new MCPHotReload(config, mockStdin, mockStdout, mockStderr);
 
       // Act
       await proxy.start();
@@ -203,7 +203,7 @@ describe('MCPDevProxy Unit Tests', () => {
     it('should handle server exit events', async () => {
       // Arrange
       const exitHandler = jest.fn();
-      proxy = new MCPDevProxy({ onExit: exitHandler }, mockStdin, mockStdout, mockStderr);
+      proxy = new MCPHotReload({ onExit: exitHandler }, mockStdin, mockStdout, mockStderr);
       const errorData: string[] = [];
       mockStderr.on('data', chunk => errorData.push(chunk.toString()));
 
@@ -219,7 +219,7 @@ describe('MCPDevProxy Unit Tests', () => {
     it('should handle server errors', async () => {
       // Arrange
       const exitHandler = jest.fn();
-      proxy = new MCPDevProxy({ onExit: exitHandler }, mockStdin, mockStdout, mockStderr);
+      proxy = new MCPHotReload({ onExit: exitHandler }, mockStdin, mockStdout, mockStderr);
       const errorData: string[] = [];
       mockStderr.on('data', chunk => errorData.push(chunk.toString()));
 
@@ -237,7 +237,7 @@ describe('MCPDevProxy Unit Tests', () => {
     it('should setup watchers for configured patterns', async () => {
       // Arrange
       jest.clearAllMocks(); // Clear any previous calls
-      proxy = new MCPDevProxy(
+      proxy = new MCPHotReload(
         { watchPattern: ['./src', './lib'] },
         mockStdin,
         mockStdout,
@@ -255,7 +255,7 @@ describe('MCPDevProxy Unit Tests', () => {
 
     it('should only trigger restart for TypeScript and JavaScript files', async () => {
       // Arrange
-      proxy = new MCPDevProxy({ onExit: () => {} }, mockStdin, mockStdout, mockStderr);
+      proxy = new MCPHotReload({ onExit: () => {} }, mockStdin, mockStdout, mockStderr);
       const restartSpy = jest.spyOn(proxy as any, 'restartServer');
 
       // Act
@@ -275,7 +275,7 @@ describe('MCPDevProxy Unit Tests', () => {
   describe('Build and Restart', () => {
     it('should execute build command with correct options', async () => {
       // Arrange
-      proxy = new MCPDevProxy(
+      proxy = new MCPHotReload(
         {
           buildCommand: 'yarn build:prod',
           cwd: '/project'
@@ -301,7 +301,7 @@ describe('MCPDevProxy Unit Tests', () => {
 
     it('should handle build failures gracefully', async () => {
       // Arrange
-      proxy = new MCPDevProxy({ onExit: () => {} }, mockStdin, mockStdout, mockStderr);
+      proxy = new MCPHotReload({ onExit: () => {} }, mockStdin, mockStdout, mockStderr);
       const errorData: string[] = [];
       mockStderr.on('data', chunk => errorData.push(chunk.toString()));
 
@@ -319,7 +319,7 @@ describe('MCPDevProxy Unit Tests', () => {
 
     it('should set isRestarting flag during restart', async () => {
       // Arrange
-      proxy = new MCPDevProxy({ onExit: () => {} }, mockStdin, mockStdout, mockStderr);
+      proxy = new MCPHotReload({ onExit: () => {} }, mockStdin, mockStdout, mockStderr);
 
       // Act
       expect((proxy as any).isRestarting).toBe(false);
@@ -335,7 +335,7 @@ describe('MCPDevProxy Unit Tests', () => {
   describe('Cleanup', () => {
     it('should cleanup resources when stopping', async () => {
       // Arrange
-      proxy = new MCPDevProxy({ onExit: () => {} }, mockStdin, mockStdout, mockStderr);
+      proxy = new MCPHotReload({ onExit: () => {} }, mockStdin, mockStdout, mockStderr);
       await proxy.start();
 
       // Create a mock debounce timer
@@ -354,7 +354,7 @@ describe('MCPDevProxy Unit Tests', () => {
     it('should handle SIGINT signal', async () => {
       // Arrange
       const exitHandler = jest.fn();
-      proxy = new MCPDevProxy({ onExit: exitHandler }, mockStdin, mockStdout, mockStderr);
+      proxy = new MCPHotReload({ onExit: exitHandler }, mockStdin, mockStdout, mockStderr);
       const errorData: string[] = [];
       mockStderr.on('data', chunk => errorData.push(chunk.toString()));
 
@@ -379,7 +379,7 @@ describe('MCPDevProxy Unit Tests', () => {
     it('should handle SIGTERM signal', async () => {
       // Arrange
       const exitHandler = jest.fn();
-      proxy = new MCPDevProxy({ onExit: exitHandler }, mockStdin, mockStdout, mockStderr);
+      proxy = new MCPHotReload({ onExit: exitHandler }, mockStdin, mockStdout, mockStderr);
       const errorData: string[] = [];
       mockStderr.on('data', chunk => errorData.push(chunk.toString()));
 
@@ -405,7 +405,7 @@ describe('MCPDevProxy Unit Tests', () => {
   describe('Session Management', () => {
     it('should initialize message parser and session manager', () => {
       // Arrange & Act
-      proxy = new MCPDevProxy({ onExit: () => {} }, mockStdin, mockStdout, mockStderr);
+      proxy = new MCPHotReload({ onExit: () => {} }, mockStdin, mockStdout, mockStderr);
 
       // Assert
       expect((proxy as any).messageParser).toBeDefined();
@@ -414,7 +414,7 @@ describe('MCPDevProxy Unit Tests', () => {
 
     it('should handle timeout for stale requests', () => {
       // Arrange
-      proxy = new MCPDevProxy({ onExit: () => {} }, mockStdin, mockStdout, mockStderr);
+      proxy = new MCPHotReload({ onExit: () => {} }, mockStdin, mockStdout, mockStderr);
       const outputData: string[] = [];
       mockStdout.on('data', chunk => outputData.push(chunk.toString()));
 

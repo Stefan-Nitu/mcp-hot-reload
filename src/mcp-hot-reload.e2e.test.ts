@@ -1,14 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { MCPDevProxy } from './mcp-dev-proxy.js';
+import { MCPHotReload } from './mcp-hot-reload.js';
 import { spawn, ChildProcess } from 'child_process';
 import { PassThrough } from 'stream';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 
-describe('MCPDevProxy Real E2E Tests', () => {
+describe('MCPHotReload Real E2E Tests', () => {
   let testDir: string;
-  let proxy: MCPDevProxy | null = null;
+  let proxy: MCPHotReload | null = null;
   let proxyStdin: PassThrough;
   let proxyStdout: PassThrough;
   let proxyStderr: PassThrough;
@@ -53,7 +53,7 @@ describe('MCPDevProxy Real E2E Tests', () => {
 
       // Act - Start real proxy with REAL MCP SDK server
       // Run from project root so it can access node_modules
-      proxy = new MCPDevProxy(
+      proxy = new MCPHotReload(
         {
           buildCommand: 'echo "Building"',
           serverCommand: 'node',
@@ -160,8 +160,8 @@ describe('MCPDevProxy Real E2E Tests', () => {
 
       // Verify stderr has proxy logs
       const errors = capturedErrors.join('');
-      expect(errors).toContain('[dev-proxy] Starting server');
-      expect(errors).toContain('[dev-proxy] Watching');
+      expect(errors).toContain('[mcp-hot-reload] Starting server');
+      expect(errors).toContain('[mcp-hot-reload] Watching');
     }, 10000);
 
     it('should handle real file changes and server restart', async () => {
@@ -228,7 +228,7 @@ process.stdin.on('data', (chunk) => {
       );
 
       // Act - Start proxy
-      proxy = new MCPDevProxy(
+      proxy = new MCPHotReload(
         {
           buildCommand: 'echo "Building"',
           serverCommand: 'node',
@@ -278,7 +278,7 @@ process.stdin.on('data', (chunk) => {
       // Verify restart happened
       expect(errors).toContain('Change detected');
       expect(errors).toContain('Build complete');
-      expect(errors).toContain('[dev-proxy] Change detected, restarting');
+      expect(errors).toContain('[mcp-hot-reload] Change detected, restarting');
 
       // Verify tools/list_changed notification was sent
       expect(output).toContain('notifications/tools/list_changed');
@@ -340,7 +340,7 @@ console.error('[server] Started - will crash on "crash" method');
       fs.writeFileSync(path.join(testDir, 'server.mjs'), serverCode);
 
       // Act - Start proxy
-      proxy = new MCPDevProxy(
+      proxy = new MCPHotReload(
         {
           serverCommand: 'node',
           serverArgs: ['server.mjs'],
@@ -428,7 +428,7 @@ process.stdin.on('data', (chunk) => {
       fs.writeFileSync(path.join(testDir, 'server.js'), serverCode);
 
       // Act - Start proxy with real build command
-      proxy = new MCPDevProxy(
+      proxy = new MCPHotReload(
         {
           buildCommand: './build.sh',
           serverCommand: 'node',
@@ -455,8 +455,8 @@ process.stdin.on('data', (chunk) => {
 
       // Assert
       const errors = capturedErrors.join('');
-      expect(errors).toContain('[dev-proxy] Running build');
-      expect(errors).toContain('[dev-proxy] Build complete');
+      expect(errors).toContain('[mcp-hot-reload] Running build');
+      expect(errors).toContain('[mcp-hot-reload] Build complete');
 
       // Verify dist was created
       expect(fs.existsSync(path.join(testDir, 'dist/index.js'))).toBe(true);
@@ -481,7 +481,7 @@ exit 1
         'console.error("[server] Running"); process.stdin.resume();');
 
       // Act
-      proxy = new MCPDevProxy(
+      proxy = new MCPHotReload(
         {
           buildCommand: './build.sh',
           serverCommand: 'node',

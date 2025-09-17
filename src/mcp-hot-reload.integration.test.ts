@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { MCPDevProxy } from './mcp-dev-proxy.js';
+import { MCPHotReload } from './mcp-hot-reload.js';
 import { PassThrough } from 'stream';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -7,9 +7,9 @@ import * as path from 'path';
 // Use process.cwd() to find the test server since we're in Jest environment
 const TEST_SERVER_PATH = path.join(process.cwd(), 'test/fixtures/servers/all-content-types-server.js');
 
-describe('MCPDevProxy Integration Tests', () => {
+describe('MCPHotReload Integration Tests', () => {
   const testDir = path.join(process.cwd(), '.test-server');
-  let proxy: MCPDevProxy | null = null;
+  let proxy: MCPHotReload | null = null;
 
   beforeEach(() => {
     // Create test server directory
@@ -50,7 +50,7 @@ describe('MCPDevProxy Integration Tests', () => {
       clientOut.on('data', (chunk) => capturedOutput.push(chunk.toString()));
       clientErr.on('data', (chunk) => capturedErrors.push(chunk.toString()));
 
-      const proxy = new MCPDevProxy({
+      const proxy = new MCPHotReload({
         buildCommand: 'echo "Building"',
         serverCommand: 'node',
         serverArgs: ['server.js'],
@@ -316,7 +316,7 @@ describe('MCPDevProxy Integration Tests', () => {
       const errors: string[] = [];
       clientErr.on('data', (chunk) => errors.push(chunk.toString()));
 
-      proxy = new MCPDevProxy({
+      proxy = new MCPHotReload({
         buildCommand: 'echo "Building"',
         serverCommand: 'node',
         serverArgs: ['server.js'],
@@ -335,9 +335,9 @@ describe('MCPDevProxy Integration Tests', () => {
 
       // Assert
       const errorLog = errors.join('');
-      expect(errorLog).toContain('[dev-proxy] Starting server');
-      expect(errorLog).toContain('[dev-proxy] Change detected');
-      expect(errorLog).toContain('[dev-proxy] Build complete');
+      expect(errorLog).toContain('[mcp-hot-reload] Starting server');
+      expect(errorLog).toContain('[mcp-hot-reload] Change detected');
+      expect(errorLog).toContain('[mcp-hot-reload] Build complete');
     });
   });
 
@@ -358,7 +358,7 @@ describe('MCPDevProxy Integration Tests', () => {
       const errors: string[] = [];
       clientErr.on('data', (chunk) => errors.push(chunk.toString()));
 
-      proxy = new MCPDevProxy({
+      proxy = new MCPHotReload({
         buildCommand: 'exit 1', // Always fails
         serverCommand: 'node',
         serverArgs: ['server.js'],
@@ -378,8 +378,8 @@ describe('MCPDevProxy Integration Tests', () => {
 
       // Assert
       const errorLog = errors.join('');
-      expect(errorLog).toContain('[dev-proxy] Change detected');
-      expect(errorLog).toContain('[dev-proxy] Build failed');
+      expect(errorLog).toContain('[mcp-hot-reload] Change detected');
+      expect(errorLog).toContain('[mcp-hot-reload] Build failed');
     });
 
     it('should handle server crashes', async () => {
@@ -391,7 +391,7 @@ describe('MCPDevProxy Integration Tests', () => {
       const errors: string[] = [];
       clientErr.on('data', (chunk) => errors.push(chunk.toString()));
 
-      proxy = new MCPDevProxy({
+      proxy = new MCPHotReload({
         buildCommand: 'echo "Building"',
         serverCommand: 'node',
         serverArgs: ['-e', 'process.exit(1)'], // Crashes immediately
@@ -405,7 +405,7 @@ describe('MCPDevProxy Integration Tests', () => {
 
       // Assert
       const errorLog = errors.join('');
-      expect(errorLog).toContain('[dev-proxy] Server exited');
+      expect(errorLog).toContain('[mcp-hot-reload] Server exited');
     });
   });
 });

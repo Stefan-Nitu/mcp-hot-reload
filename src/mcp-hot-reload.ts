@@ -6,7 +6,7 @@ import { MessageParser } from './message-parser.js';
 import { SessionManager } from './session-manager.js';
 import { ProxyConfig, JSONRPCMessage } from './types.js';
 
-export class MCPDevProxy {
+export class MCPHotReload {
   private serverProcess: ChildProcess | null = null;
   private watchers: FSWatcher[] = [];
   private debounceTimer: NodeJS.Timeout | null = null;
@@ -42,7 +42,7 @@ export class MCPDevProxy {
 
       if (this.isRestarting) {
         this.sessionManager.queueMessage(message, raw);
-        this.stderr.write(`[dev-proxy] Buffered message: ${message.method || 'response'}\n`);
+        this.stderr.write(`[mcp-hot-reload] Buffered message: ${message.method || 'response'}\n`);
       } else {
         const shouldForward = this.sessionManager.handleClientMessage(message, raw);
 
@@ -67,7 +67,7 @@ export class MCPDevProxy {
   }
 
   private async startServer(): Promise<void> {
-    this.stderr.write('[dev-proxy] Starting server...\n');
+    this.stderr.write('[mcp-hot-reload] Starting server...\n');
 
     if (this.serverProcess) {
       await this.stopServer();
@@ -75,15 +75,15 @@ export class MCPDevProxy {
 
     // Run build command before starting server
     try {
-      this.stderr.write('[dev-proxy] Running build...\n');
+      this.stderr.write('[mcp-hot-reload] Running build...\n');
       execSync(this.config.buildCommand, {
         stdio: ['ignore', 'ignore', 'pipe'],
         encoding: 'utf8',
         cwd: this.config.cwd
       });
-      this.stderr.write('[dev-proxy] Build complete\n');
+      this.stderr.write('[mcp-hot-reload] Build complete\n');
     } catch (error: any) {
-      this.stderr.write(`[dev-proxy] Build failed: ${error.message}\n`);
+      this.stderr.write(`[mcp-hot-reload] Build failed: ${error.message}\n`);
       // Continue anyway - server might work without build
     }
 
@@ -111,14 +111,14 @@ export class MCPDevProxy {
 
     this.serverProcess.on('exit', (code, signal) => {
       if (!this.isRestarting) {
-        this.stderr.write(`[dev-proxy] Server exited (code: ${code}, signal: ${signal})\n`);
+        this.stderr.write(`[mcp-hot-reload] Server exited (code: ${code}, signal: ${signal})\n`);
         this.cleanup();
         this.config.onExit(code || 0);
       }
     });
 
     this.serverProcess.on('error', (err) => {
-      this.stderr.write(`[dev-proxy] Server error: ${err.message}\n`);
+      this.stderr.write(`[mcp-hot-reload] Server error: ${err.message}\n`);
       if (!this.isRestarting) {
         this.cleanup();
         this.config.onExit(1);
@@ -129,7 +129,7 @@ export class MCPDevProxy {
 
     const initRequest = this.sessionManager.getInitializeRequest();
     if (initRequest && this.serverProcess.stdin?.writable) {
-      this.stderr.write('[dev-proxy] Re-sending initialize request\n');
+      this.stderr.write('[mcp-hot-reload] Re-sending initialize request\n');
       this.serverProcess.stdin.write(initRequest);
 
       await new Promise(resolve => setTimeout(resolve, 100));
@@ -137,7 +137,7 @@ export class MCPDevProxy {
 
     const queuedMessages = this.sessionManager.getQueuedMessages();
     if (queuedMessages.length > 0) {
-      this.stderr.write(`[dev-proxy] Replaying ${queuedMessages.length} buffered messages\n`);
+      this.stderr.write(`[mcp-hot-reload] Replaying ${queuedMessages.length} buffered messages\n`);
       for (const buffer of queuedMessages) {
         if (this.serverProcess.stdin?.writable) {
           this.serverProcess.stdin.write(buffer.raw);
@@ -150,7 +150,7 @@ export class MCPDevProxy {
       const notification = this.sessionManager.createToolsChangedNotification();
       const notificationStr = JSON.stringify(notification) + '\n';
       this.stdout.write(notificationStr);
-      this.stderr.write('[dev-proxy] Sent tools/list_changed notification\n');
+      this.stderr.write('[mcp-hot-reload] Sent tools/list_changed notification\n');
     }
 
     this.isRestarting = false;
@@ -197,13 +197,13 @@ export class MCPDevProxy {
   }
 
   private async restartServer(): Promise<void> {
-    this.stderr.write('[dev-proxy] Change detected, restarting...\n');
+    this.stderr.write('[mcp-hot-reload] Change detected, restarting...\n');
     this.isRestarting = true;
 
     try {
       await this.startServer();
     } catch (error: any) {
-      this.stderr.write(`[dev-proxy] Restart failed: ${error.message}\n`);
+      this.stderr.write(`[mcp-hot-reload] Restart failed: ${error.message}\n`);
       this.isRestarting = false;
     }
   }
@@ -229,7 +229,7 @@ export class MCPDevProxy {
       });
 
       this.watchers.push(watcher);
-      this.stderr.write(`[dev-proxy] Watching ${pattern} for changes...\n`);
+      this.stderr.write(`[mcp-hot-reload] Watching ${pattern} for changes...\n`);
     });
   }
 
@@ -274,14 +274,14 @@ export class MCPDevProxy {
     this.stdin.on('data', (data) => this.handleIncomingData(data));
 
     process.on('SIGINT', async () => {
-      this.stderr.write('[dev-proxy] Shutting down...\n');
+      this.stderr.write('[mcp-hot-reload] Shutting down...\n');
       await this.stopServer();
       this.cleanup();
       this.config.onExit(0);
     });
 
     process.on('SIGTERM', async () => {
-      this.stderr.write('[dev-proxy] Shutting down...\n');
+      this.stderr.write('[mcp-hot-reload] Shutting down...\n');
       await this.stopServer();
       this.cleanup();
       this.config.onExit(0);
@@ -306,6 +306,6 @@ export class MCPDevProxy {
 }
 
 if (require.main === module) {
-  const proxy = new MCPDevProxy();
+  const proxy = new MCPHotReload();
   proxy.start();
 }
