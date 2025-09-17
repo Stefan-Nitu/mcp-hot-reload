@@ -1,0 +1,12 @@
+{
+  "buildCommand": "npm run build",
+  "watchPattern": ["./src", "./config"],
+  "debounceMs": 300,
+  "serverCommand": "node",
+  "serverArgs": ["dist/index.js"],
+  "cwd": ".",
+  "env": {
+    "LOG_LEVEL": "debug",
+    "NODE_ENV": "development"
+  }
+}

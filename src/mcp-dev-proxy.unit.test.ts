@@ -1,0 +1,440 @@
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
+import { MCPDevProxy } from './mcp-dev-proxy.js';
+import { PassThrough } from 'stream';
+import { EventEmitter } from 'events';
+import { spawn, execSync } from 'child_process';
+import { watch } from 'fs';
+
+// Mock all external dependencies
+jest.mock('child_process');
+jest.mock('fs');
+
+describe('MCPDevProxy Unit Tests', () => {
+  let mockStdin: PassThrough;
+  let mockStdout: PassThrough;
+  let mockStderr: PassThrough;
+  let proxy: MCPDevProxy;
+  let mockServerProcess: any;
+  let mockWatcher: any;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+
+    // Setup mock streams
+    mockStdin = new PassThrough();
+    mockStdout = new PassThrough();
+    mockStderr = new PassThrough();
+
+    // Setup mock server process
+    mockServerProcess = new EventEmitter() as any;
+    mockServerProcess.stdin = new PassThrough();
+    mockServerProcess.stdout = new PassThrough();
+    mockServerProcess.stderr = new PassThrough();
+    mockServerProcess.kill = jest.fn();
+    mockServerProcess.removeAllListeners = jest.fn();
+    mockServerProcess.once = jest.fn((event, handler) => {
+      mockServerProcess.on(event, handler);
+    });
+
+    // Setup mock file watcher
+    mockWatcher = new EventEmitter() as any;
+    mockWatcher.close = jest.fn();
+
+    // Mock spawn to return our mock process
+    (spawn as jest.MockedFunction<typeof spawn>).mockReturnValue(mockServerProcess);
+
+    // Mock watch to return our mock watcher
+    (watch as jest.MockedFunction<typeof watch>).mockReturnValue(mockWatcher);
+
+    // Mock execSync for build command
+    (execSync as jest.MockedFunction<typeof execSync>).mockReturnValue(Buffer.from('Build output'));
+  });
+
+  afterEach(() => {
+    // Clean up event listeners
+    process.removeAllListeners('SIGINT');
+    process.removeAllListeners('SIGTERM');
+    process.removeAllListeners('exit');
+
+    // Clean up any active proxy
+    if (proxy) {
+      (proxy as any).cleanup?.();
+      proxy = null as any;
+    }
+
+    // Clean up any intervals
+    if ((proxy as any)?.timeoutInterval) {
+      clearInterval((proxy as any).timeoutInterval);
+    }
+
+    // Clean up mock streams
+    mockStdin?.destroy();
+    mockStdout?.destroy();
+    mockStderr?.destroy();
+
+    jest.restoreAllMocks();
+  });
+
+  describe('Initialization and Configuration', () => {
+    it('should initialize with default configuration', () => {
+      // Arrange & Act
+      proxy = new MCPDevProxy({ onExit: () => {} }, mockStdin, mockStdout, mockStderr);
+
+      // Assert
+      expect(proxy).toBeDefined();
+      expect((proxy as any).config.buildCommand).toBe('npm run build');
+      expect((proxy as any).config.debounceMs).toBe(300);
+      expect((proxy as any).config.serverCommand).toBe('node');
+    });
+
+    it('should accept custom configuration', () => {
+      // Arrange
+      const customConfig = {
+        buildCommand: 'yarn build',
+        debounceMs: 500,
+        serverCommand: 'deno',
+        serverArgs: ['run', 'server.ts'],
+        watchPattern: ['src', 'lib'],
+        env: { DEBUG: 'true' }
+      };
+
+      // Act
+      proxy = new MCPDevProxy(customConfig, mockStdin, mockStdout, mockStderr);
+
+      // Assert
+      expect((proxy as any).config.buildCommand).toBe('yarn build');
+      expect((proxy as any).config.debounceMs).toBe(500);
+      expect((proxy as any).config.serverCommand).toBe('deno');
+      expect((proxy as any).config.serverArgs).toEqual(['run', 'server.ts']);
+    });
+
+    it('should not start when MCP_DEV_MODE is child', () => {
+      // Arrange
+      process.env.MCP_DEV_MODE = 'child';
+      proxy = new MCPDevProxy({ onExit: () => {} }, mockStdin, mockStdout, mockStderr);
+
+      // Act
+      proxy.start();
+
+      // Assert
+      expect(spawn).not.toHaveBeenCalled();
+
+      // Cleanup
+      delete process.env.MCP_DEV_MODE;
+    });
+  });
+
+  describe('Message Handling', () => {
+    it('should parse and handle incoming JSON-RPC messages', async () => {
+      // Arrange
+      proxy = new MCPDevProxy({ onExit: () => {} }, mockStdin, mockStdout, mockStderr);
+      const handleSpy = jest.spyOn(proxy as any, 'handleIncomingData');
+
+      // Act
+      await proxy.start();
+      const testMessage = Buffer.from('{"jsonrpc":"2.0","id":1,"method":"test"}\n');
+      mockStdin.emit('data', testMessage);
+
+      // Assert
+      expect(handleSpy).toHaveBeenCalledWith(testMessage);
+    });
+
+    it('should forward server output to stdout', () => {
+      // Arrange
+      proxy = new MCPDevProxy({ onExit: () => {} }, mockStdin, mockStdout, mockStderr);
+      const outputData: string[] = [];
+      mockStdout.on('data', chunk => outputData.push(chunk.toString()));
+
+      // Act
+      proxy.start();
+      const serverOutput = Buffer.from('{"jsonrpc":"2.0","result":"test"}\n');
+      mockServerProcess.stdout.emit('data', serverOutput);
+
+      // Assert
+      expect(outputData.join('')).toBe(serverOutput.toString());
+    });
+
+    it('should forward server errors to stderr', async () => {
+      // Arrange
+      proxy = new MCPDevProxy({ onExit: () => {} }, mockStdin, mockStdout, mockStderr);
+      const errorData: string[] = [];
+      mockStderr.on('data', chunk => errorData.push(chunk.toString()));
+
+      // Act
+      await proxy.start();
+      const serverError = Buffer.from('[server] Error message\n');
+      mockServerProcess.stderr.emit('data', serverError);
+
+      // Assert
+      expect(errorData.join('')).toContain('[server] Error message');
+    });
+  });
+
+  describe('Process Management', () => {
+    it('should spawn server with correct configuration', async () => {
+      // Arrange
+      const config = {
+        serverCommand: 'deno',
+        serverArgs: ['run', 'server.ts'],
+        cwd: '/test/dir',
+        env: { TEST_VAR: 'value' },
+        onExit: () => {}
+      };
+      proxy = new MCPDevProxy(config, mockStdin, mockStdout, mockStderr);
+
+      // Act
+      await proxy.start();
+
+      // Assert
+      expect(spawn).toHaveBeenCalledWith(
+        'deno',
+        ['run', 'server.ts'],
+        expect.objectContaining({
+          stdio: ['pipe', 'pipe', 'pipe'],
+          cwd: '/test/dir',
+          env: expect.objectContaining({
+            TEST_VAR: 'value',
+            MCP_DEV_MODE: 'child'
+          })
+        })
+      );
+    });
+
+    it('should handle server exit events', async () => {
+      // Arrange
+      const exitHandler = jest.fn();
+      proxy = new MCPDevProxy({ onExit: exitHandler }, mockStdin, mockStdout, mockStderr);
+      const errorData: string[] = [];
+      mockStderr.on('data', chunk => errorData.push(chunk.toString()));
+
+      // Act
+      await proxy.start();
+      mockServerProcess.emit('exit', 0, null);
+
+      // Assert
+      expect(errorData.join('')).toContain('Server exited');
+      expect(exitHandler).toHaveBeenCalledWith(0);
+    });
+
+    it('should handle server errors', async () => {
+      // Arrange
+      const exitHandler = jest.fn();
+      proxy = new MCPDevProxy({ onExit: exitHandler }, mockStdin, mockStdout, mockStderr);
+      const errorData: string[] = [];
+      mockStderr.on('data', chunk => errorData.push(chunk.toString()));
+
+      // Act
+      await proxy.start();
+      mockServerProcess.emit('error', new Error('Connection failed'));
+
+      // Assert
+      expect(errorData.join('')).toContain('Server error: Connection failed');
+      expect(exitHandler).toHaveBeenCalledWith(1);
+    });
+  });
+
+  describe('File Watching', () => {
+    it('should setup watchers for configured patterns', async () => {
+      // Arrange
+      jest.clearAllMocks(); // Clear any previous calls
+      proxy = new MCPDevProxy(
+        { watchPattern: ['./src', './lib'] },
+        mockStdin,
+        mockStdout,
+        mockStderr
+      );
+
+      // Act
+      await proxy.start();
+
+      // Assert
+      expect(watch).toHaveBeenCalledTimes(2);
+      expect(watch).toHaveBeenCalledWith('./src', { recursive: true });
+      expect(watch).toHaveBeenCalledWith('./lib', { recursive: true });
+    });
+
+    it('should only trigger restart for TypeScript and JavaScript files', async () => {
+      // Arrange
+      proxy = new MCPDevProxy({ onExit: () => {} }, mockStdin, mockStdout, mockStderr);
+      const restartSpy = jest.spyOn(proxy as any, 'restartServer');
+
+      // Act
+      await proxy.start();
+
+      // Test non-TS/JS file - should not trigger
+      mockWatcher.emit('change', 'change', 'config.json');
+      expect(restartSpy).not.toHaveBeenCalled();
+
+      // Test TS file - should trigger with debounce
+      mockWatcher.emit('change', 'change', 'index.ts');
+      // Note: debounce timer prevents immediate call
+      expect(restartSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Build and Restart', () => {
+    it('should execute build command with correct options', async () => {
+      // Arrange
+      proxy = new MCPDevProxy(
+        {
+          buildCommand: 'yarn build:prod',
+          cwd: '/project'
+        },
+        mockStdin,
+        mockStdout,
+        mockStderr
+      );
+
+      // Act
+      await (proxy as any).restartServer();
+
+      // Assert
+      expect(execSync).toHaveBeenCalledWith(
+        'yarn build:prod',
+        expect.objectContaining({
+          stdio: ['ignore', 'ignore', 'pipe'],
+          encoding: 'utf8',
+          cwd: '/project'
+        })
+      );
+    });
+
+    it('should handle build failures gracefully', async () => {
+      // Arrange
+      proxy = new MCPDevProxy({ onExit: () => {} }, mockStdin, mockStdout, mockStderr);
+      const errorData: string[] = [];
+      mockStderr.on('data', chunk => errorData.push(chunk.toString()));
+
+      (execSync as jest.MockedFunction<typeof execSync>).mockImplementation(() => {
+        throw new Error('Syntax error in file.ts');
+      });
+
+      // Act
+      await (proxy as any).restartServer();
+
+      // Assert
+      expect(errorData.join('')).toContain('Build failed: Syntax error in file.ts');
+      expect((proxy as any).isRestarting).toBe(false);
+    });
+
+    it('should set isRestarting flag during restart', async () => {
+      // Arrange
+      proxy = new MCPDevProxy({ onExit: () => {} }, mockStdin, mockStdout, mockStderr);
+
+      // Act
+      expect((proxy as any).isRestarting).toBe(false);
+
+      const restartPromise = (proxy as any).restartServer();
+      expect((proxy as any).isRestarting).toBe(true);
+
+      await restartPromise;
+      expect((proxy as any).isRestarting).toBe(false);
+    });
+  });
+
+  describe('Cleanup', () => {
+    it('should cleanup resources when stopping', async () => {
+      // Arrange
+      proxy = new MCPDevProxy({ onExit: () => {} }, mockStdin, mockStdout, mockStderr);
+      await proxy.start();
+
+      // Create a mock debounce timer
+      (proxy as any).debounceTimer = setTimeout(() => {}, 1000);
+      // Simulate watchers were created
+      (proxy as any).watchers = [mockWatcher];
+
+      // Act
+      (proxy as any).cleanup();
+
+      // Assert
+      expect(mockWatcher.close).toHaveBeenCalled();
+      expect(mockServerProcess.kill).toHaveBeenCalledWith('SIGTERM');
+    });
+
+    it('should handle SIGINT signal', async () => {
+      // Arrange
+      const exitHandler = jest.fn();
+      proxy = new MCPDevProxy({ onExit: exitHandler }, mockStdin, mockStdout, mockStderr);
+      const errorData: string[] = [];
+      mockStderr.on('data', chunk => errorData.push(chunk.toString()));
+
+      // Mock stopServer to resolve immediately
+      const stopServerMock = jest.spyOn(proxy as any, 'stopServer').mockResolvedValue(undefined);
+
+      // Act
+      await proxy.start();
+
+      // Get the signal handler
+      const sigintHandler = process.listeners('SIGINT')[process.listeners('SIGINT').length - 1] as any;
+
+      // Call the handler and wait for it
+      await sigintHandler();
+
+      // Assert
+      expect(errorData.join('')).toContain('Shutting down');
+      expect(stopServerMock).toHaveBeenCalled();
+      expect(exitHandler).toHaveBeenCalledWith(0);
+    });
+
+    it('should handle SIGTERM signal', async () => {
+      // Arrange
+      const exitHandler = jest.fn();
+      proxy = new MCPDevProxy({ onExit: exitHandler }, mockStdin, mockStdout, mockStderr);
+      const errorData: string[] = [];
+      mockStderr.on('data', chunk => errorData.push(chunk.toString()));
+
+      // Mock stopServer to resolve immediately
+      const stopServerMock = jest.spyOn(proxy as any, 'stopServer').mockResolvedValue(undefined);
+
+      // Act
+      await proxy.start();
+
+      // Get the signal handler
+      const sigtermHandler = process.listeners('SIGTERM')[process.listeners('SIGTERM').length - 1] as any;
+
+      // Call the handler and wait for it
+      await sigtermHandler();
+
+      // Assert
+      expect(errorData.join('')).toContain('Shutting down');
+      expect(stopServerMock).toHaveBeenCalled();
+      expect(exitHandler).toHaveBeenCalledWith(0);
+    });
+  });
+
+  describe('Session Management', () => {
+    it('should initialize message parser and session manager', () => {
+      // Arrange & Act
+      proxy = new MCPDevProxy({ onExit: () => {} }, mockStdin, mockStdout, mockStderr);
+
+      // Assert
+      expect((proxy as any).messageParser).toBeDefined();
+      expect((proxy as any).sessionManager).toBeDefined();
+    });
+
+    it('should handle timeout for stale requests', () => {
+      // Arrange
+      proxy = new MCPDevProxy({ onExit: () => {} }, mockStdin, mockStdout, mockStderr);
+      const outputData: string[] = [];
+      mockStdout.on('data', chunk => outputData.push(chunk.toString()));
+
+      // Setup a pending request in session manager
+      const timestamp = Date.now() - 40000; // 40 seconds ago to ensure timeout
+      (proxy as any).sessionManager.pendingRequests.set(123, {
+        message: { jsonrpc: '2.0', id: 123, method: 'test' },
+        raw: '{"jsonrpc":"2.0","id":123,"method":"test"}',
+        timestamp
+      });
+
+      // Act
+      (proxy as any).isRestarting = true;
+      (proxy as any).handleTimeout();
+
+      // Assert
+      const output = outputData.join('');
+      expect(output).toContain('"id":123');
+      expect(output).toContain('"error"');
+      expect(output).toContain('timed out');
+    });
+  });
+});
