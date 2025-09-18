@@ -77,7 +77,7 @@ export class MCPHotReload {
 
     // COMMENTED OUT: Complex message parsing
     // if (process.env.DEBUG) {
-    //   console.error(`[mcp-hot-reload] handleIncomingData called, size: ${data.length}, isRestarting: ${this.isRestarting}`);
+    //   log.debug({ size: data.length, isRestarting: this.isRestarting }, 'handleIncomingData called');
     // }
     // const { messages, rawMessages } = this.messageParser.parseMessages(data.toString());
 
@@ -85,33 +85,33 @@ export class MCPHotReload {
     //   const raw = rawMessages[index];
 
     //   if (process.env.DEBUG) {
-    //     console.error(`[mcp-hot-reload] Processing message ${index + 1}/${messages.length}, method: ${message.method}, id: ${message.id}`);
+    //     log.debug({ messageNum: index + 1, totalMessages: messages.length, method: message.method, id: message.id }, 'Processing message');
     //   }
 
     //   if (this.isRestarting) {
     //     if (process.env.DEBUG) {
-    //       console.error('[mcp-hot-reload] Server is restarting, queueing message');
+    //       log.debug('Server is restarting, queueing message');
     //     }
     //     this.sessionManager.queueMessage(message, raw);
     //   } else {
     //     const shouldForward = this.sessionManager.handleClientMessage(message, raw);
     //     if (process.env.DEBUG) {
-    //       console.error(`[mcp-hot-reload] shouldForward: ${shouldForward}, serverProcess exists: ${!!this.serverProcess}, stdin writable: ${this.serverProcess?.stdin?.writable}`);
+    //       log.debug({ shouldForward, serverProcessExists: !!this.serverProcess, stdinWritable: this.serverProcess?.stdin?.writable }, 'Message forward decision');
     //     }
 
     //     if (shouldForward && this.serverProcess?.stdin?.writable) {
     //       if (process.env.DEBUG) {
-    //         console.error('[mcp-hot-reload] Forwarding to server:', raw.substring(0, 100));
+    //         log.debug({ preview: raw.substring(0, 100) }, 'Forwarding to server');
     //       }
     //       this.serverProcess.stdin.write(raw);
     //       this.metrics.messagesForwarded++;
     //     } else if (!shouldForward && message.method !== 'initialize') {
     //       if (process.env.DEBUG) {
-    //         console.error('[mcp-hot-reload] Queueing message, not ready yet');
+    //         log.debug('Queueing message, not ready yet');
     //       }
     //       this.sessionManager.queueMessage(message, raw);
     //     } else if (process.env.DEBUG) {
-    //       console.error('[mcp-hot-reload] Not forwarding - shouldForward:', shouldForward, 'writable:', this.serverProcess?.stdin?.writable);
+    //       log.debug({ shouldForward, writable: this.serverProcess?.stdin?.writable }, 'Not forwarding');
     //     }
     //   }
     // });
