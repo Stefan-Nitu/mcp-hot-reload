@@ -394,6 +394,30 @@ npm test -- --coverage
 | "Build failed" | Run build command manually to see detailed errors |
 | Session not preserved | Check that initialization message is properly formatted |
 
+## Releasing
+
+To release a new version:
+
+1. Update version in `package.json` and `package-lock.json`:
+   ```bash
+   npm version patch --no-git-tag-version  # or minor/major
+   ```
+2. Commit the version bump:
+   ```bash
+   git add package*.json
+   git commit -m "Bump version to X.Y.Z"
+   ```
+3. Push to main:
+   ```bash
+   git push origin main
+   ```
+4. The CD workflow will automatically:
+   - Run all tests
+   - Publish to npm if version changed
+   - Create and push a git tag
+
+**Important**: Do NOT create tags locally. Let the CD workflow handle it to ensure tags are only created after successful deployment.
+
 ## Contributing
 
 We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.

@@ -51,24 +51,14 @@ jobs:
       run: |
         echo "Publishing version ${{ steps.version.outputs.local }} to npm..."
         npm publish
+        echo "✅ Successfully published to https://www.npmjs.com/package/mcp-hot-reload"
       env:
         NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-    - name: Create GitHub Release
+    - name: Create git tag
       if: steps.version.outputs.changed == 'true'
-      uses: actions/create-release@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        tag_name: v${{ steps.version.outputs.local }}
-        release_name: Release v${{ steps.version.outputs.local }}
-        body: |
-          ## 📦 Published to npm
-
-          ```bash
-          npm install -g mcp-hot-reload@${{ steps.version.outputs.local }}
-          ```
-
-          View on npm: https://www.npmjs.com/package/mcp-hot-reload
-        draft: false
-        prerelease: false
+      run: |
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+        git config --global user.name "github-actions[bot]"
+        git tag -a "v${{ steps.version.outputs.local }}" -m "Release v${{ steps.version.outputs.local }}"
+        git push origin "v${{ steps.version.outputs.local }}"
