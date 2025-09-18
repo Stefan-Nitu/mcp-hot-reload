@@ -3,12 +3,13 @@ import { MCPHotReload } from './mcp-hot-reload.js';
 import { PassThrough } from 'stream';
 import * as fs from 'fs';
 import * as path from 'path';
+import chokidar from 'chokidar';
 
 // Use process.cwd() to find the test server since we're in Jest environment
 const TEST_SERVER_PATH = path.join(process.cwd(), 'test/fixtures/servers/all-content-types-server.js');
 
 describe('MCPHotReload Integration Tests', () => {
-  const testDir = path.join(process.cwd(), '.test-server');
+  const testDir = path.join(process.cwd(), 'test-server-tmp');
   let proxy: MCPHotReload | null = null;
 
   beforeEach(() => {
@@ -306,13 +307,15 @@ describe('MCPHotReload Integration Tests', () => {
       fs.copyFileSync(TEST_SERVER_PATH, serverPath);
       fs.chmodSync(serverPath, 0o755);
 
+      // Only create the directory, not the file yet
       fs.mkdirSync(path.join(testDir, 'src'), { recursive: true });
-      fs.writeFileSync(path.join(testDir, 'src/watch.ts'), '// version 1');
 
       const clientIn = new PassThrough();
       const clientOut = new PassThrough();
       const clientErr = new PassThrough();
 
+      const outputs: string[] = [];
+      clientOut.on('data', (chunk) => outputs.push(chunk.toString()));
       const errors: string[] = [];
       clientErr.on('data', (chunk) => errors.push(chunk.toString()));
 
@@ -321,7 +324,7 @@ describe('MCPHotReload Integration Tests', () => {
         serverCommand: 'node',
         serverArgs: ['server.js'],
         cwd: testDir,
-        watchPattern: path.join(testDir, 'src'),
+        watchPattern: 'src',  // Watch the src directory (globs not supported in chokidar v4)
         debounceMs: 100,
         onExit: () => {}
       }, clientIn, clientOut, clientErr);
@@ -329,16 +332,164 @@ describe('MCPHotReload Integration Tests', () => {
       await proxy.start();
       await new Promise(resolve => setTimeout(resolve, 1000));
 
-      // Act - trigger file change
-      fs.writeFileSync(path.join(testDir, 'src/watch.ts'), '// version 2');
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      // Send initial initialize request
+      const initRequest = JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {}
+      }) + '\n';
+      clientIn.write(initRequest);
+      await new Promise(resolve => setTimeout(resolve, 500));
 
-      // Assert
-      const errorLog = errors.join('');
-      expect(errorLog).toContain('[mcp-hot-reload] Starting server');
-      expect(errorLog).toContain('[mcp-hot-reload] Change detected');
-      expect(errorLog).toContain('[mcp-hot-reload] Build complete');
-    });
+      const initialOutputs = outputs.length;
+
+      // Act - create a new file (should trigger 'add' event)
+      const watchFile = path.join(testDir, 'src/watch.ts');
+      fs.writeFileSync(watchFile, '// initial content');
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      // Now modify it (should trigger 'change' event)
+      fs.writeFileSync(watchFile, '// modified content');
+      await new Promise(resolve => setTimeout(resolve, 2000)); // Wait for detection
+
+      // Send another request after restart
+      clientIn.write(initRequest);
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      // Assert - Check actual behavior through metrics
+      const metrics = proxy.getMetrics();
+      expect(metrics.fileChangesDetected).toBeGreaterThan(0);
+      expect(metrics.restartCount).toBeGreaterThan(0);
+      expect(metrics.buildCount).toBeGreaterThanOrEqual(2); // Initial + restart
+
+      // Also verify we got more outputs
+      expect(outputs.length).toBeGreaterThan(initialOutputs);
+    }, 10000);
+
+    it('debug: chokidar should work in Jest', async () => {
+      // Direct chokidar test
+      const watchDir = path.join(testDir, 'chokidar-test');
+      fs.mkdirSync(watchDir, { recursive: true });
+
+      const watcher = chokidar.watch(watchDir, {
+        ignoreInitial: true,
+        persistent: true,
+        usePolling: true,
+        interval: 100
+      });
+
+      let eventCount = 0;
+      watcher.on('all', () => {
+        eventCount++;
+      });
+
+      await new Promise<void>(resolve => watcher.once('ready', () => resolve()));
+
+      // Create a file
+      const testFile = path.join(watchDir, 'test.txt');
+      fs.writeFileSync(testFile, 'content');
+
+      // Wait longer for polling (Jest might be interfering with timers)
+      await new Promise(resolve => setTimeout(resolve, 3000));
+
+      // Modify the file
+      fs.writeFileSync(testFile, 'modified');
+
+      // Wait even longer
+      await new Promise(resolve => setTimeout(resolve, 3000));
+
+      await watcher.close();
+      expect(eventCount).toBeGreaterThan(0);
+    }, 10000);
+
+    it('should support glob patterns for file watching', async () => {
+      // Arrange
+      const serverPath = path.join(testDir, 'server.js');
+      fs.copyFileSync(TEST_SERVER_PATH, serverPath);
+      fs.chmodSync(serverPath, 0o755);
+      fs.mkdirSync(path.join(testDir, 'src'), { recursive: true });
+      fs.mkdirSync(path.join(testDir, 'lib'), { recursive: true });
+
+      proxy = new MCPHotReload({
+        serverCommand: 'node',
+        serverArgs: ['server.js'],
+        cwd: testDir,
+        watchPattern: ['./src/**/*.py', './lib/**/*.js'],
+        debounceMs: 100,
+        onExit: () => {}
+      }, new PassThrough(), new PassThrough(), new PassThrough());
+
+      await proxy.start();
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      // Act & Assert
+      const initialMetrics = proxy.getMetrics();
+
+      // TypeScript files should NOT trigger (not in pattern)
+      fs.writeFileSync(path.join(testDir, 'src/index.ts'), 'console.log("ts")');
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      const afterTSMetrics = proxy.getMetrics();
+      expect(afterTSMetrics.fileChangesDetected).toBe(initialMetrics.fileChangesDetected);
+
+      // Python files in src SHOULD trigger
+      fs.writeFileSync(path.join(testDir, 'src/main.py'), 'print("hello")');
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      const afterPyMetrics = proxy.getMetrics();
+      expect(afterPyMetrics.fileChangesDetected).toBeGreaterThan(afterTSMetrics.fileChangesDetected);
+
+      // JavaScript files in lib SHOULD trigger
+      fs.writeFileSync(path.join(testDir, 'lib/utils.js'), 'module.exports = {}');
+      await new Promise(resolve => setTimeout(resolve, 1500));
+
+      const finalMetrics = proxy.getMetrics();
+      expect(finalMetrics.fileChangesDetected).toBeGreaterThan(afterPyMetrics.fileChangesDetected);
+      expect(finalMetrics.restartCount).toBeGreaterThan(initialMetrics.restartCount);
+    }, 10000);
+
+    it('should only restart for TypeScript files, not other file types', async () => {
+      // Arrange
+      const serverPath = path.join(testDir, 'server.js');
+      fs.copyFileSync(TEST_SERVER_PATH, serverPath);
+      fs.chmodSync(serverPath, 0o755);
+      fs.mkdirSync(path.join(testDir, 'src'), { recursive: true });
+
+      proxy = new MCPHotReload({
+        serverCommand: 'node',
+        serverArgs: ['server.js'],
+        cwd: testDir,
+        watchPattern: 'src',
+        debounceMs: 100,
+        onExit: () => {}
+      }, new PassThrough(), new PassThrough(), new PassThrough());
+
+      await proxy.start();
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      // Act & Assert
+      const initialMetrics = proxy.getMetrics();
+
+      // Non-TypeScript files should NOT trigger restarts
+      fs.writeFileSync(path.join(testDir, 'src/readme.md'), '# README');
+      fs.writeFileSync(path.join(testDir, 'src/config.json'), '{}');
+      fs.writeFileSync(path.join(testDir, 'src/styles.css'), 'body {}');
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      const afterNonTSMetrics = proxy.getMetrics();
+      expect(afterNonTSMetrics.fileChangesDetected).toBe(initialMetrics.fileChangesDetected);
+      expect(afterNonTSMetrics.restartCount).toBe(initialMetrics.restartCount);
+
+      // TypeScript files SHOULD trigger restarts
+      fs.writeFileSync(path.join(testDir, 'src/index.ts'), 'console.log("test")');
+      fs.writeFileSync(path.join(testDir, 'src/types.tsx'), 'export {}');
+      await new Promise(resolve => setTimeout(resolve, 1500));
+
+      const finalMetrics = proxy.getMetrics();
+      expect(finalMetrics.fileChangesDetected).toBeGreaterThan(afterNonTSMetrics.fileChangesDetected);
+      expect(finalMetrics.restartCount).toBeGreaterThan(afterNonTSMetrics.restartCount);
+    }, 10000);
   });
 
   describe('Error Handling', () => {
@@ -355,6 +506,8 @@ describe('MCPHotReload Integration Tests', () => {
       const clientOut = new PassThrough();
       const clientErr = new PassThrough();
 
+      const outputs: string[] = [];
+      clientOut.on('data', (chunk) => outputs.push(chunk.toString()));
       const errors: string[] = [];
       clientErr.on('data', (chunk) => errors.push(chunk.toString()));
 
@@ -372,15 +525,34 @@ describe('MCPHotReload Integration Tests', () => {
       await proxy.start();
       await new Promise(resolve => setTimeout(resolve, 1000));
 
-      // Trigger change
+      // Send initialize request
+      const initRequest = JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {}
+      }) + '\n';
+      clientIn.write(initRequest);
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      // Trigger change (build will fail but server continues)
       fs.writeFileSync(path.join(testDir, 'src/watch.ts'), '// changed');
       await new Promise(resolve => setTimeout(resolve, 2000));
 
-      // Assert
-      const errorLog = errors.join('');
-      expect(errorLog).toContain('[mcp-hot-reload] Change detected');
-      expect(errorLog).toContain('[mcp-hot-reload] Build failed');
-    });
+      // Send another request - server should still respond despite build failure
+      clientIn.write(initRequest);
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      // Assert - Check behavior through metrics
+      const metrics = proxy.getMetrics();
+      expect(metrics.buildCount).toBeGreaterThan(0);
+      expect(metrics.buildFailureCount).toBeGreaterThan(0); // Build failed
+      expect(metrics.buildSuccessCount).toBe(0); // No successful builds
+
+      // Server should still be running and processing
+      expect(proxy).toBeDefined();
+      expect(outputs.length).toBeGreaterThan(0);
+    }, 10000);
 
     it('should handle server crashes', async () => {
       // Arrange
@@ -403,9 +575,10 @@ describe('MCPHotReload Integration Tests', () => {
       await proxy.start();
       await new Promise(resolve => setTimeout(resolve, 2000));
 
-      // Assert
-      const errorLog = errors.join('');
-      expect(errorLog).toContain('[mcp-hot-reload] Server exited');
-    });
+      // Assert - Server process should have exited
+      // The proxy's serverProcess should be null after crash
+      await new Promise(resolve => setTimeout(resolve, 500));
+      expect((proxy as any).serverProcess).toBeNull();
+    }, 10000);
   });
 });

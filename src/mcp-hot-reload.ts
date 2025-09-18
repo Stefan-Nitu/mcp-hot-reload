@@ -1,20 +1,33 @@
 #!/usr/bin/env node
 import { spawn, ChildProcess, execSync } from 'child_process';
-import * as chokidar from 'chokidar';
+import chokidar, { FSWatcher, WatchOptions } from 'chokidar';
+import * as path from 'path';
 import { Readable, Writable } from 'stream';
+import * as micromatch from 'micromatch';
 import { MessageParser } from './message-parser.js';
 import { SessionManager } from './session-manager.js';
 import { ProxyConfig, JSONRPCMessage } from './types.js';
 
 export class MCPHotReload {
   private serverProcess: ChildProcess | null = null;
-  private watcher: chokidar.FSWatcher | null = null;
+  private watcher: FSWatcher | null = null;
   private debounceTimer: NodeJS.Timeout | null = null;
   private timeoutInterval: NodeJS.Timeout | null = null;
+  private filePatterns: string[] = [];
   private messageParser = new MessageParser();
   private sessionManager = new SessionManager();
   private isRestarting = false;
   private config: Required<ProxyConfig>;
+
+  // Internal metrics for testing (no logs, just state tracking)
+  private metrics = {
+    restartCount: 0,
+    buildCount: 0,
+    buildSuccessCount: 0,
+    buildFailureCount: 0,
+    messagesForwarded: 0,
+    fileChangesDetected: 0
+  };
 
   constructor(
     config: ProxyConfig = {},
@@ -42,12 +55,12 @@ export class MCPHotReload {
 
       if (this.isRestarting) {
         this.sessionManager.queueMessage(message, raw);
-        this.stderr.write(`[mcp-hot-reload] Buffered message: ${message.method || 'response'}\n`);
       } else {
         const shouldForward = this.sessionManager.handleClientMessage(message, raw);
 
         if (shouldForward && this.serverProcess?.stdin?.writable) {
           this.serverProcess.stdin.write(raw);
+          this.metrics.messagesForwarded++;
         } else if (!shouldForward && message.method !== 'initialize') {
           this.sessionManager.queueMessage(message, raw);
         }
@@ -67,7 +80,6 @@ export class MCPHotReload {
   }
 
   private async startServer(): Promise<void> {
-    this.stderr.write('[mcp-hot-reload] Starting server...\n');
 
     if (this.serverProcess) {
       await this.stopServer();
@@ -75,15 +87,15 @@ export class MCPHotReload {
 
     // Run build command before starting server
     try {
-      this.stderr.write('[mcp-hot-reload] Running build...\n');
+      this.metrics.buildCount++;
       execSync(this.config.buildCommand, {
         stdio: ['ignore', 'ignore', 'pipe'],
         encoding: 'utf8',
         cwd: this.config.cwd
       });
-      this.stderr.write('[mcp-hot-reload] Build complete\n');
+      this.metrics.buildSuccessCount++;
     } catch (error: any) {
-      this.stderr.write(`[mcp-hot-reload] Build failed: ${error.message}\n`);
+      this.metrics.buildFailureCount++;
       // Continue anyway - server might work without build
     }
 
@@ -106,19 +118,16 @@ export class MCPHotReload {
     });
 
     this.serverProcess.stderr!.on('data', (data) => {
-      this.stderr.write(data);
     });
 
     this.serverProcess.on('exit', (code, signal) => {
       if (!this.isRestarting) {
-        this.stderr.write(`[mcp-hot-reload] Server exited (code: ${code}, signal: ${signal})\n`);
         this.cleanup();
         this.config.onExit(code || 0);
       }
     });
 
     this.serverProcess.on('error', (err) => {
-      this.stderr.write(`[mcp-hot-reload] Server error: ${err.message}\n`);
       if (!this.isRestarting) {
         this.cleanup();
         this.config.onExit(1);
@@ -129,7 +138,6 @@ export class MCPHotReload {
 
     const initRequest = this.sessionManager.getInitializeRequest();
     if (initRequest && this.serverProcess.stdin?.writable) {
-      this.stderr.write('[mcp-hot-reload] Re-sending initialize request\n');
       this.serverProcess.stdin.write(initRequest);
 
       await new Promise(resolve => setTimeout(resolve, 100));
@@ -137,7 +145,6 @@ export class MCPHotReload {
 
     const queuedMessages = this.sessionManager.getQueuedMessages();
     if (queuedMessages.length > 0) {
-      this.stderr.write(`[mcp-hot-reload] Replaying ${queuedMessages.length} buffered messages\n`);
       for (const buffer of queuedMessages) {
         if (this.serverProcess.stdin?.writable) {
           this.serverProcess.stdin.write(buffer.raw);
@@ -150,7 +157,6 @@ export class MCPHotReload {
       const notification = this.sessionManager.createToolsChangedNotification();
       const notificationStr = JSON.stringify(notification) + '\n';
       this.stdout.write(notificationStr);
-      this.stderr.write('[mcp-hot-reload] Sent tools/list_changed notification\n');
     }
 
     this.isRestarting = false;
@@ -197,54 +203,142 @@ export class MCPHotReload {
   }
 
   private async restartServer(): Promise<void> {
-    this.stderr.write('[mcp-hot-reload] Change detected, restarting...\n');
     this.isRestarting = true;
+    this.metrics.restartCount++;
 
     try {
       await this.startServer();
     } catch (error: any) {
-      this.stderr.write(`[mcp-hot-reload] Restart failed: ${error.message}\n`);
       this.isRestarting = false;
     }
   }
 
-  private setupWatcher(): void {
-    const patterns = Array.isArray(this.config.watchPattern)
-      ? this.config.watchPattern
-      : [this.config.watchPattern];
+  private async setupWatcher(): Promise<void> {
+    const patterns = this.normalizePatterns(this.config.watchPattern);
+    if (!patterns.length) return;
 
-    // Use chokidar for cross-platform file watching
-    this.watcher = chokidar.watch(patterns, {
-      ignored: /(^|[\/\\])\../, // ignore dotfiles
+    const watchTargets = this.extractWatchTargets(patterns);
+    if (!watchTargets.length) return;
+
+    this.watcher = chokidar.watch(watchTargets, this.getWatcherOptions());
+    this.attachWatcherEventHandlers();
+    await this.waitForWatcherReady();
+  }
+
+  private normalizePatterns(pattern: string | string[] | undefined): string[] {
+    if (!pattern) return [];
+    return Array.isArray(pattern) ? pattern : [pattern];
+  }
+
+  private extractWatchTargets(patterns: string[]): string[] {
+    const targets = new Set<string>();
+    this.filePatterns = [];
+
+    for (const pattern of patterns) {
+      const absolutePath = path.isAbsolute(pattern)
+        ? pattern
+        : path.join(this.config.cwd, pattern);
+
+      if (this.isGlobPattern(absolutePath)) {
+        // Store the glob pattern for file matching
+        this.filePatterns.push(absolutePath);
+        // Extract base directory to watch
+        targets.add(this.extractDirFromGlob(absolutePath));
+      } else {
+        // Direct directory - default to TypeScript files
+        targets.add(absolutePath);
+        this.filePatterns.push(path.join(absolutePath, '**/*.ts'));
+        this.filePatterns.push(path.join(absolutePath, '**/*.tsx'));
+        this.filePatterns.push(path.join(absolutePath, '**/*.mts'));
+        this.filePatterns.push(path.join(absolutePath, '**/*.cts'));
+      }
+    }
+
+    return Array.from(targets);
+  }
+
+  private isGlobPattern(path: string): boolean {
+    return path.includes('*') || path.includes('?');
+  }
+
+  private extractDirFromGlob(globPath: string): string {
+    const parts = globPath.split('/');
+    const nonGlobParts: string[] = [];
+
+    for (const part of parts) {
+      if (this.isGlobPattern(part)) break;
+      nonGlobParts.push(part);
+    }
+
+    return nonGlobParts.length ? nonGlobParts.join('/') : path.dirname(globPath);
+  }
+
+  private getWatcherOptions(): WatchOptions {
+    return {
       persistent: true,
-      ignoreInitial: true
-    });
-
-    this.watcher.on('change', (path: string) => {
-      if (path.endsWith('.ts') || path.endsWith('.js')) {
-        if (this.debounceTimer) {
-          clearTimeout(this.debounceTimer);
-        }
-        this.debounceTimer = setTimeout(() => {
-          this.restartServer();
-        }, this.config.debounceMs);
+      ignoreInitial: true,
+      depth: 99,
+      awaitWriteFinish: {
+        stabilityThreshold: 500,
+        pollInterval: 100
+      },
+      ignorePermissionErrors: true,
+      atomic: true,
+      ignored: (filePath: string, stats?: any) => {
+        if (!stats?.isFile()) return false;
+        return !this.shouldWatchFile(filePath);
       }
-    });
+    };
+  }
 
-    this.watcher.on('add', (path: string) => {
-      if (path.endsWith('.ts') || path.endsWith('.js')) {
-        if (this.debounceTimer) {
-          clearTimeout(this.debounceTimer);
-        }
-        this.debounceTimer = setTimeout(() => {
-          this.restartServer();
-        }, this.config.debounceMs);
-      }
-    });
 
-    patterns.forEach(pattern => {
-      this.stderr.write(`[mcp-hot-reload] Watching ${pattern} for changes...\n`);
+  private attachWatcherEventHandlers(): void {
+    if (!this.watcher) return;
+
+    this.watcher.on('error', this.logDebug.bind(this, 'Watcher error:'));
+    this.watcher.on('add', this.handleFileChange.bind(this));
+    this.watcher.on('change', this.handleFileChange.bind(this));
+  }
+
+  private async waitForWatcherReady(): Promise<void> {
+    return new Promise<void>((resolve) => {
+      this.watcher!.once('ready', resolve);
     });
+  }
+
+  private shouldWatchFile(filePath: string): boolean {
+    // If we have file patterns from config, use them
+    if (this.filePatterns.length > 0) {
+      return micromatch.isMatch(filePath, this.filePatterns);
+    }
+    // Default to TypeScript files
+    return this.isTypeScriptFile(filePath);
+  }
+
+  private isTypeScriptFile(path: string): boolean {
+    return path.endsWith('.ts') || path.endsWith('.tsx') ||
+           path.endsWith('.mts') || path.endsWith('.cts');
+  }
+
+  private logDebug(message: string, ...args: any[]): void {
+    if (process.env.DEBUG) {
+      console.error(`[MCPHotReload] ${message}`, ...args);
+    }
+  }
+
+  private handleFileChange(filePath: string): void {
+    this.logDebug('File changed:', filePath);
+    this.metrics.fileChangesDetected++;
+    this.debounceRestart();
+  }
+
+  private debounceRestart(): void {
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+    }
+    this.debounceTimer = setTimeout(() => {
+      this.restartServer();
+    }, this.config.debounceMs);
   }
 
   private handleTimeout(): void {
@@ -290,14 +384,12 @@ export class MCPHotReload {
     this.stdin.on('data', (data) => this.handleIncomingData(data));
 
     process.on('SIGINT', async () => {
-      this.stderr.write('[mcp-hot-reload] Shutting down...\n');
       await this.stopServer();
       this.cleanup();
       this.config.onExit(0);
     });
 
     process.on('SIGTERM', async () => {
-      this.stderr.write('[mcp-hot-reload] Shutting down...\n');
       await this.stopServer();
       this.cleanup();
       this.config.onExit(0);
@@ -312,16 +404,17 @@ export class MCPHotReload {
     this.timeoutInterval.unref();
 
     await this.startServer();
-    this.setupWatcher();
+    await this.setupWatcher();
   }
 
   public async stop(): Promise<void> {
     await this.stopServer();
     this.cleanup();
   }
+
+  // Getter for tests to verify behavior
+  public getMetrics() {
+    return { ...this.metrics };
+  }
 }
 
-if (require.main === module) {
-  const proxy = new MCPHotReload();
-  proxy.start();
-}

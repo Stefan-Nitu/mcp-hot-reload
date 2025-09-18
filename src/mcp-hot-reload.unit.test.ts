@@ -3,11 +3,11 @@ import { MCPHotReload } from './mcp-hot-reload.js';
 import { PassThrough } from 'stream';
 import { EventEmitter } from 'events';
 import { spawn, execSync } from 'child_process';
-import { watch } from 'fs';
+import chokidar from 'chokidar';
 
 // Mock all external dependencies
 jest.mock('child_process');
-jest.mock('fs');
+jest.mock('chokidar');
 
 describe('MCPHotReload Unit Tests', () => {
   let mockStdin: PassThrough;
@@ -39,12 +39,24 @@ describe('MCPHotReload Unit Tests', () => {
     // Setup mock file watcher
     mockWatcher = new EventEmitter() as any;
     mockWatcher.close = jest.fn();
+    mockWatcher.on = jest.fn((event: string, handler: (...args: any[]) => void) => {
+      EventEmitter.prototype.on.call(mockWatcher, event, handler);
+      return mockWatcher;
+    });
+    mockWatcher.once = jest.fn((event: string, handler: (...args: any[]) => void) => {
+      EventEmitter.prototype.once.call(mockWatcher, event, handler);
+      return mockWatcher;
+    });
 
     // Mock spawn to return our mock process
     (spawn as jest.MockedFunction<typeof spawn>).mockReturnValue(mockServerProcess);
 
-    // Mock watch to return our mock watcher
-    (watch as jest.MockedFunction<typeof watch>).mockReturnValue(mockWatcher);
+    // Mock chokidar to return our mock watcher
+    (chokidar.watch as jest.Mock).mockImplementation(() => {
+      // Emit ready event on next tick to simulate async initialization
+      process.nextTick(() => mockWatcher.emit('ready'));
+      return mockWatcher;
+    });
 
     // Mock execSync for build command
     (execSync as jest.MockedFunction<typeof execSync>).mockReturnValue(Buffer.from('Build output'));
@@ -165,8 +177,8 @@ describe('MCPHotReload Unit Tests', () => {
       const serverError = Buffer.from('[server] Error message\n');
       mockServerProcess.stderr.emit('data', serverError);
 
-      // Assert
-      expect(errorData.join('')).toContain('[server] Error message');
+      // Assert - stderr forwarding removed with all logging
+      expect(errorData.join('')).toBe('');
     });
   });
 
@@ -204,31 +216,27 @@ describe('MCPHotReload Unit Tests', () => {
       // Arrange
       const exitHandler = jest.fn();
       proxy = new MCPHotReload({ onExit: exitHandler }, mockStdin, mockStdout, mockStderr);
-      const errorData: string[] = [];
-      mockStderr.on('data', chunk => errorData.push(chunk.toString()));
 
       // Act
       await proxy.start();
       mockServerProcess.emit('exit', 0, null);
 
       // Assert
-      expect(errorData.join('')).toContain('Server exited');
       expect(exitHandler).toHaveBeenCalledWith(0);
+      // Verify process reference is cleared after exit
+      expect((proxy as any).serverProcess).toBeNull();
     });
 
     it('should handle server errors', async () => {
       // Arrange
       const exitHandler = jest.fn();
       proxy = new MCPHotReload({ onExit: exitHandler }, mockStdin, mockStdout, mockStderr);
-      const errorData: string[] = [];
-      mockStderr.on('data', chunk => errorData.push(chunk.toString()));
 
       // Act
       await proxy.start();
       mockServerProcess.emit('error', new Error('Connection failed'));
 
-      // Assert
-      expect(errorData.join('')).toContain('Server error: Connection failed');
+      // Assert - error triggers exit with code 1
       expect(exitHandler).toHaveBeenCalledWith(1);
     });
   });
@@ -248,9 +256,15 @@ describe('MCPHotReload Unit Tests', () => {
       await proxy.start();
 
       // Assert
-      expect(watch).toHaveBeenCalledTimes(2);
-      expect(watch).toHaveBeenCalledWith('./src', { recursive: true });
-      expect(watch).toHaveBeenCalledWith('./lib', { recursive: true });
+      expect(chokidar.watch).toHaveBeenCalledTimes(1);
+      // The MCPHotReload class resolves relative paths to absolute
+      expect(chokidar.watch).toHaveBeenCalledWith(
+        expect.arrayContaining([
+          expect.stringContaining('/src'),
+          expect.stringContaining('/lib')
+        ]),
+        expect.any(Object)
+      );
     });
 
     it('should only trigger restart for TypeScript and JavaScript files', async () => {
@@ -261,12 +275,11 @@ describe('MCPHotReload Unit Tests', () => {
       // Act
       await proxy.start();
 
-      // Test non-TS/JS file - should not trigger
-      mockWatcher.emit('change', 'change', 'config.json');
-      expect(restartSpy).not.toHaveBeenCalled();
+      // Test non-TS/JS file - should not trigger (filtered by ignored function)
+      // Since our ignored function filters out non-.ts/.js files, this won't trigger
 
       // Test TS file - should trigger with debounce
-      mockWatcher.emit('change', 'change', 'index.ts');
+      mockWatcher.emit('change', 'index.ts');
       // Note: debounce timer prevents immediate call
       expect(restartSpy).not.toHaveBeenCalled();
     });
@@ -299,11 +312,12 @@ describe('MCPHotReload Unit Tests', () => {
       );
     });
 
-    it('should handle build failures gracefully', async () => {
+    it('should continue with server start even when build fails', async () => {
       // Arrange
-      proxy = new MCPHotReload({ onExit: () => {} }, mockStdin, mockStdout, mockStderr);
-      const errorData: string[] = [];
-      mockStderr.on('data', chunk => errorData.push(chunk.toString()));
+      proxy = new MCPHotReload({
+        buildCommand: 'npm run build',
+        onExit: () => {}
+      }, mockStdin, mockStdout, mockStderr);
 
       (execSync as jest.MockedFunction<typeof execSync>).mockImplementation(() => {
         throw new Error('Syntax error in file.ts');
@@ -312,9 +326,11 @@ describe('MCPHotReload Unit Tests', () => {
       // Act
       await (proxy as any).restartServer();
 
-      // Assert
-      expect(errorData.join('')).toContain('Build failed: Syntax error in file.ts');
+      // Assert - build fails but server still starts
+      expect(execSync).toHaveBeenCalled();
+      expect(spawn).toHaveBeenCalled(); // Server process is still spawned
       expect((proxy as any).isRestarting).toBe(false);
+      expect((proxy as any).serverProcess).toBeDefined();
     });
 
     it('should set isRestarting flag during restart', async () => {
@@ -355,8 +371,6 @@ describe('MCPHotReload Unit Tests', () => {
       // Arrange
       const exitHandler = jest.fn();
       proxy = new MCPHotReload({ onExit: exitHandler }, mockStdin, mockStdout, mockStderr);
-      const errorData: string[] = [];
-      mockStderr.on('data', chunk => errorData.push(chunk.toString()));
 
       // Mock stopServer to resolve immediately
       const stopServerMock = jest.spyOn(proxy as any, 'stopServer').mockResolvedValue(undefined);
@@ -370,8 +384,7 @@ describe('MCPHotReload Unit Tests', () => {
       // Call the handler and wait for it
       await sigintHandler();
 
-      // Assert
-      expect(errorData.join('')).toContain('Shutting down');
+      // Assert - verify graceful shutdown sequence
       expect(stopServerMock).toHaveBeenCalled();
       expect(exitHandler).toHaveBeenCalledWith(0);
     });
@@ -380,8 +393,6 @@ describe('MCPHotReload Unit Tests', () => {
       // Arrange
       const exitHandler = jest.fn();
       proxy = new MCPHotReload({ onExit: exitHandler }, mockStdin, mockStdout, mockStderr);
-      const errorData: string[] = [];
-      mockStderr.on('data', chunk => errorData.push(chunk.toString()));
 
       // Mock stopServer to resolve immediately
       const stopServerMock = jest.spyOn(proxy as any, 'stopServer').mockResolvedValue(undefined);
@@ -395,8 +406,7 @@ describe('MCPHotReload Unit Tests', () => {
       // Call the handler and wait for it
       await sigtermHandler();
 
-      // Assert
-      expect(errorData.join('')).toContain('Shutting down');
+      // Assert - verify graceful shutdown sequence
       expect(stopServerMock).toHaveBeenCalled();
       expect(exitHandler).toHaveBeenCalledWith(0);
     });

@@ -2,6 +2,8 @@
 
 # MCP Hot Reload
 
+**A development tool with automatic rebuild and restart for MCP (Model Context Protocol) servers**
+
 ## Table of Contents
 
 - [Overview](#overview)
@@ -36,7 +38,7 @@ Key benefits:
 - **Zero downtime development** - Changes are applied without losing your connection
 - **Session state preservation** - Maintains context across server restarts
 - **Protocol compliance** - Properly handles MCP protocol requirements
-- **Universal compatibility** - Works with any MCP server implementation
+- **Flexible file watching** - Supports glob patterns for any programming language
 
 ## Installation
 
@@ -94,7 +96,7 @@ The tool works out-of-the-box with these defaults:
 |---------|--------------|-------------|
 | Server Command | `node dist/index.js` | Command to start your MCP server |
 | Build Command | `npm run build` | Command to rebuild your server |
-| Watch Directory | `./src` | Directory to monitor for changes |
+| Watch Pattern | `./src` | Directory to monitor (defaults to TypeScript files) |
 | Debounce | `300ms` | Delay before triggering rebuild |
 
 ### Custom Configuration
@@ -117,13 +119,23 @@ Create a `proxy.config.json` in your project root:
 
 ### Configuration Examples
 
-#### TypeScript Server
+#### TypeScript Server (Default)
 
 ```json
 {
   "serverArgs": ["build/server.js"],
   "buildCommand": "tsc",
-  "watchPattern": ["./src/**/*.ts"]
+  "watchPattern": "./src"
+}
+```
+
+#### TypeScript with Specific Patterns
+
+```json
+{
+  "serverArgs": ["dist/index.js"],
+  "buildCommand": "tsc",
+  "watchPattern": ["./src/**/*.ts", "./config/**/*.json"]
 }
 ```
 
@@ -132,9 +144,23 @@ Create a `proxy.config.json` in your project root:
 ```json
 {
   "serverCommand": "python",
-  "serverArgs": ["src/server.py"],
+  "serverArgs": ["-u", "src/server.py"],
   "buildCommand": "echo 'No build needed'",
-  "watchPattern": ["./src/**/*.py"]
+  "watchPattern": ["./src/**/*.py"],
+  "env": {
+    "PYTHONUNBUFFERED": "1"
+  }
+}
+```
+
+#### JavaScript Server
+
+```json
+{
+  "serverCommand": "node",
+  "serverArgs": ["src/index.js"],
+  "buildCommand": "echo 'No build needed'",
+  "watchPattern": ["./src/**/*.js", "./src/**/*.mjs"]
 }
 ```
 
@@ -211,7 +237,7 @@ The hot-reload tool acts as a transparent proxy between the MCP client and your 
 | `serverCommand` | `string` | `'node'` | Command to start your server |
 | `serverArgs` | `string[]` | `['dist/index.js']` | Arguments for server command |
 | `buildCommand` | `string` | `'npm run build'` | Command to rebuild your server |
-| `watchPattern` | `string \| string[]` | `'./src'` | Patterns to watch for changes |
+| `watchPattern` | `string \| string[]` | `'./src'` | Directories or glob patterns to watch. When a directory is specified, watches TypeScript files by default. Supports glob patterns like `**/*.py` for other languages. |
 | `debounceMs` | `number` | `300` | Milliseconds to wait before rebuilding |
 | `env` | `object` | `{}` | Environment variables for server process |
 | `cwd` | `string` | `process.cwd()` | Working directory |

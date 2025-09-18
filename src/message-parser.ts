@@ -24,7 +24,7 @@ export class MessageParser {
         messages.push(message);
         rawMessages.push(line + '\n');
       } catch (error) {
-        console.error('[dev-proxy] Failed to parse JSON-RPC message:', line, error);
+        // Silently ignore parse errors
       }
     }
 
