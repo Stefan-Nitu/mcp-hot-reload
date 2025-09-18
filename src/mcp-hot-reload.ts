@@ -3,10 +3,12 @@ import chokidar, { FSWatcher } from 'chokidar';
 import * as path from 'path';
 import { Readable, Writable } from 'stream';
 import micromatch from 'micromatch';
-import * as fs from 'fs';
 import { MessageParser } from './message-parser.js';
 import { SessionManager } from './session-manager.js';
 import { ProxyConfig, JSONRPCMessage } from './types.js';
+import { createLogger } from './utils/logger.js';
+
+const log = createLogger('mcp-hot-reload');
 
 export class MCPHotReload {
   private serverProcess: ChildProcess | null = null;
@@ -55,7 +57,7 @@ export class MCPHotReload {
 
     // Debug logging
     if (process.env.DEBUG) {
-      console.error('[mcp-hot-reload] Config:', JSON.stringify(this.config, null, 2));
+      log.debug({ config: this.config }, 'Configuration loaded');
     }
   }
 
@@ -122,7 +124,7 @@ export class MCPHotReload {
     // Also track messages for session management
     const output = data.toString();
     if (process.env.DEBUG) {
-      console.error('[mcp-hot-reload] Server output:', output.substring(0, 200));
+      log.debug({ preview: output.substring(0, 200) }, 'Server output received');
     }
 
     const { messages } = this.messageParser.parseMessages(output);
@@ -136,7 +138,7 @@ export class MCPHotReload {
   private async startServer(): Promise<void> {
     this.serverStartCount++;
     if (process.env.DEBUG) {
-      console.error(`[mcp-hot-reload] Starting server... (call #${this.serverStartCount})`);
+      log.debug({ callCount: this.serverStartCount }, 'Starting server...');
     }
 
     if (this.serverProcess) {
@@ -146,7 +148,7 @@ export class MCPHotReload {
     // Run build command before starting server
     try {
       if (process.env.DEBUG) {
-        console.error('[mcp-hot-reload] Running build command:', this.config.buildCommand);
+        log.debug({ buildCommand: this.config.buildCommand }, 'Running build command');
       }
       this.metrics.buildCount++;
       execSync(this.config.buildCommand, {
@@ -161,11 +163,11 @@ export class MCPHotReload {
     }
 
     if (process.env.DEBUG) {
-      console.error('[mcp-hot-reload] Spawning:', this.config.serverCommand, this.config.serverArgs);
+      log.debug({ command: this.config.serverCommand, args: this.config.serverArgs }, 'Spawning server process');
     }
 
     if (process.env.DEBUG) {
-      console.error(`[mcp-hot-reload] About to spawn, serverProcess is currently: ${this.serverProcess ? 'EXISTS' : 'null'}`);
+      log.debug({ hasServerProcess: !!this.serverProcess }, 'About to spawn server');
     }
 
     this.serverProcess = spawn(
@@ -183,7 +185,7 @@ export class MCPHotReload {
     );
 
     if (process.env.DEBUG) {
-      console.error(`[mcp-hot-reload] Server spawned, PID: ${this.serverProcess.pid}`);
+      log.debug({ pid: this.serverProcess.pid }, 'Server spawned successfully');
     }
 
     let eventCount = 0;
@@ -191,22 +193,20 @@ export class MCPHotReload {
       eventCount++;
       if (process.env.DEBUG) {
         const preview = data.toString().substring(0, 50);
-        console.error(`[mcp-hot-reload] stdout event #${eventCount}, size: ${data.length}, preview: ${preview}`);
+        log.debug({ eventCount, dataSize: data.length, preview }, 'Received stdout event');
         if (eventCount === 2) {
-          // On second event, print stack trace to see where it's coming from
-          console.error('[mcp-hot-reload] SECOND EVENT STACK TRACE:');
-          console.trace();
+          log.warn('SECOND stdout event detected - possible duplicate handler issue');
         }
       }
       this.handleServerOutput(data);
     };
 
     if (process.env.DEBUG) {
-      console.error(`[mcp-hot-reload] Attaching stdout handler, listeners before: ${this.serverProcess.stdout!.listenerCount('data')}`);
+      log.debug({ listenersBefore: this.serverProcess.stdout!.listenerCount('data') }, 'Attaching stdout handler');
     }
     this.serverProcess.stdout!.on('data', stdoutHandler);
     if (process.env.DEBUG) {
-      console.error(`[mcp-hot-reload] Attached stdout handler, listeners after: ${this.serverProcess.stdout!.listenerCount('data')}`);
+      log.debug({ listenersAfter: this.serverProcess.stdout!.listenerCount('data') }, 'Stdout handler attached');
     }
 
     this.serverProcess.stderr!.on('data', (data) => {
@@ -238,14 +238,12 @@ export class MCPHotReload {
     // Only re-send cached initialize during restart, not initial start
     if (this.isRestarting) {
       const initRequest = this.sessionManager.getInitializeRequest();
-      fs.appendFileSync('/tmp/mcp-debug.log', `[${new Date().toISOString()}] After restart - initRequest exists: ${!!initRequest}, isRestarting: ${this.isRestarting}\n`);
       if (process.env.DEBUG) {
-        console.error(`[mcp-hot-reload] After waitForServerReady, initRequest exists: ${!!initRequest}, isRestarting: ${this.isRestarting}`);
+        log.debug({ hasInitRequest: !!initRequest, isRestarting: this.isRestarting }, 'After waitForServerReady');
       }
       if (initRequest && this.serverProcess.stdin?.writable) {
-        fs.appendFileSync('/tmp/mcp-debug.log', `[${new Date().toISOString()}] RE-SENDING CACHED INITIALIZE REQUEST\n`);
         if (process.env.DEBUG) {
-          console.error('[mcp-hot-reload] RE-SENDING CACHED INITIALIZE REQUEST (during restart)!');
+          log.info('Re-sending cached initialize request during restart');
         }
         this.serverProcess.stdin.write(initRequest);
 
@@ -319,15 +317,15 @@ export class MCPHotReload {
   }
 
   private async restartServer(): Promise<void> {
-    fs.appendFileSync('/tmp/mcp-debug.log', `[${new Date().toISOString()}] Restarting server...\n`);
+    log.debug('Restarting server...');
     this.isRestarting = true;
     this.metrics.restartCount++;
 
     try {
       await this.startServer();
-      fs.appendFileSync('/tmp/mcp-debug.log', `[${new Date().toISOString()}] Server restarted successfully\n`);
+      log.debug('Server restarted successfully');
     } catch (error: any) {
-      fs.appendFileSync('/tmp/mcp-debug.log', `[${new Date().toISOString()}] Server restart failed: ${error}\n`);
+      log.error({ err: error }, 'Server restart failed');
       this.isRestarting = false;
     }
   }
@@ -412,7 +410,7 @@ export class MCPHotReload {
     this.watcher.on('add', this.handleFileChange.bind(this));
     this.watcher.on('change', this.handleFileChange.bind(this));
     this.watcher.on('ready', () => {
-      fs.appendFileSync('/tmp/mcp-debug.log', `[${new Date().toISOString()}] Watcher is ready!\n`);
+      log.debug('File watcher is ready');
     });
   }
 
@@ -426,7 +424,7 @@ export class MCPHotReload {
     // If we have file patterns from config, use them
     if (this.filePatterns.length > 0) {
       const matches = micromatch.isMatch(filePath, this.filePatterns);
-      fs.appendFileSync('/tmp/mcp-debug.log', `[${new Date().toISOString()}] File pattern check: ${filePath} matches patterns ${JSON.stringify(this.filePatterns)}: ${matches}\n`);
+      log.trace({ filePath, patterns: this.filePatterns, matches }, 'File pattern check');
       return matches;
     }
 
@@ -444,7 +442,7 @@ export class MCPHotReload {
       '.cpp', '.c', '.h', '.hpp',      // C/C++
       '.cs'                            // C#
     ].includes(ext);
-    fs.appendFileSync('/tmp/mcp-debug.log', `[${new Date().toISOString()}] Extension check: ${filePath} has ext '${ext}', is source file: ${isSourceFile}\n`);
+    log.trace({ filePath, ext, isSourceFile }, 'Extension check');
     return isSourceFile;
   }
 
@@ -473,28 +471,26 @@ export class MCPHotReload {
 
   private logDebug(message: string, ...args: any[]): void {
     if (process.env.DEBUG) {
-      console.error(`[MCPHotReload] ${message}`, ...args);
+      log.debug({ args }, message);
     }
   }
 
   private handleFileChange(filePath: string): void {
     try {
-      fs.appendFileSync('/tmp/mcp-debug.log', `[${new Date().toISOString()}] File change detected: ${filePath}\n`);
+      log.debug({ filePath }, 'File change detected');
 
       // Check if we should watch this file type
       if (!this.shouldWatchFile(filePath)) {
-        fs.appendFileSync('/tmp/mcp-debug.log', `[${new Date().toISOString()}] Ignoring file (not watched type): ${filePath}\n`);
+        log.trace({ filePath }, 'Ignoring file (not watched type)');
         return;
       }
 
-      fs.appendFileSync('/tmp/mcp-debug.log', `[${new Date().toISOString()}] File changed (processing): ${filePath}\n`);
-      console.error('[mcp-hot-reload] File changed:', filePath); // Always log for testing
+      log.info({ filePath }, 'File changed, restarting server...');
       this.logDebug('File changed:', filePath);
       this.metrics.fileChangesDetected++;
       this.debounceRestart();
     } catch (error) {
-      fs.appendFileSync('/tmp/mcp-debug.log', `[${new Date().toISOString()}] Error in handleFileChange: ${error}\n`);
-      console.error('[mcp-hot-reload] Error handling file change:', error);
+      log.error({ err: error }, 'Error handling file change');
     }
   }
 
@@ -554,7 +550,7 @@ export class MCPHotReload {
     // This prevents recursive proxying while allowing multiple proxy instances
     if (process.env.MCP_PROXY_INSTANCE) {
       if (process.env.DEBUG) {
-        console.error('[mcp-hot-reload] Skipping start - already running as child of proxy');
+        log.info('Skipping start - already running as child of proxy');
       }
       return;
     }
@@ -564,24 +560,24 @@ export class MCPHotReload {
     // await this.setupWatcher();
     // Setup watcher but don't wait for ready event (non-blocking)
     const patterns = this.normalizePatterns(this.config.watchPattern);
-    fs.appendFileSync('/tmp/mcp-debug.log', `\n[${new Date().toISOString()}] Watch patterns: ${JSON.stringify(patterns)}\n`);
+    log.debug({ patterns }, 'Watch patterns configured');
     if (patterns.length) {
       const watchTargets = this.extractWatchTargets(patterns);
-      fs.appendFileSync('/tmp/mcp-debug.log', `[${new Date().toISOString()}] Watch targets: ${JSON.stringify(watchTargets)}\n`);
+      log.debug({ watchTargets }, 'Watch targets identified');
       if (watchTargets.length) {
         this.watcher = chokidar.watch(watchTargets, this.getWatcherOptions());
         this.attachWatcherEventHandlers();
-        fs.appendFileSync('/tmp/mcp-debug.log', `[${new Date().toISOString()}] Watcher created and handlers attached\n`);
+        log.debug('Watcher created and handlers attached');
         // Don't wait for ready - that was blocking
       }
     }
 
     if (process.env.DEBUG) {
-      console.error('[mcp-hot-reload] Setting up stdin handler');
+      log.debug('Setting up stdin handler');
     }
     this.stdin.on('data', (data) => {
       if (process.env.DEBUG) {
-        console.error('[mcp-hot-reload] Received data:', data.toString().substring(0, 100));
+        log.debug({ preview: data.toString().substring(0, 100) }, 'Received stdin data');
       }
       this.handleIncomingData(data);
     });

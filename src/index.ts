@@ -4,6 +4,9 @@ import { MCPHotReload } from './mcp-hot-reload.js';
 import { ProxyConfig } from './types.js';
 import { existsSync, readFileSync } from 'fs';
 import * as path from 'path';
+import { createLogger } from './utils/logger.js';
+
+const log = createLogger('index');
 
 // Load config from proxy.config.json if it exists
 let config: ProxyConfig = {};
@@ -14,7 +17,7 @@ if (existsSync(configPath)) {
     const configContent = readFileSync(configPath, 'utf-8');
     config = JSON.parse(configContent);
   } catch (error) {
-    console.error('Error reading proxy.config.json:', error);
+    log.warn({ err: error }, 'Could not read proxy.config.json, using defaults');
   }
 }
 
@@ -45,6 +48,6 @@ if (args.length > 0) {
 
 const proxy = new MCPHotReload(config);
 proxy.start().catch(error => {
-  console.error('Failed to start proxy:', error);
+  log.error({ err: error }, 'Failed to start proxy');
   process.exit(1);
 });

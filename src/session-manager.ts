@@ -4,6 +4,9 @@ import {
   MCPInitializeResponse,
   MessageBuffer
 } from './types.js';
+import { createLogger } from './utils/logger.js';
+
+const log = createLogger('session-manager');
 
 export class SessionManager {
   private initializeRequest: MCPInitializeRequest | null = null;
@@ -16,7 +19,7 @@ export class SessionManager {
   handleClientMessage(message: JSONRPCMessage, raw: string): boolean {
     if (message.method === 'initialize' && message.id) {
       if (process.env.DEBUG) {
-        console.error('[SessionManager] Storing initialize request');
+        log.debug('Storing initialize request');
       }
       this.initializeRequest = message as MCPInitializeRequest;
       this.isInitialized = false;
@@ -67,7 +70,7 @@ export class SessionManager {
 
   getInitializeRequest(): string | null {
     if (process.env.DEBUG) {
-      console.error(`[SessionManager] getInitializeRequest called, has request: ${!!this.initializeRequest}`);
+      log.debug({ hasRequest: !!this.initializeRequest }, 'getInitializeRequest called');
     }
     return this.initializeRequest ? JSON.stringify(this.initializeRequest) + '\n' : null;
   }

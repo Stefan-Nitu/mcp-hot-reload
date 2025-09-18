@@ -1,4 +1,7 @@
 import { JSONRPCMessage } from './types.js';
+import { createLogger } from './utils/logger.js';
+
+const log = createLogger('message-parser');
 
 export class MessageParser {
   private partialMessage = '';
@@ -19,7 +22,7 @@ export class MessageParser {
         const message = JSON.parse(line) as JSONRPCMessage;
         if (message.jsonrpc !== '2.0') {
           if (process.env.DEBUG) {
-            console.error('[dev-proxy] Invalid JSON-RPC version:', message);
+            log.warn({ message }, 'Invalid JSON-RPC version');
           }
           continue;
         }
