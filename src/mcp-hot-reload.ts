@@ -593,20 +593,37 @@ export class MCPHotReload {
     // Keep stdin open
     this.stdin.resume();
 
-    // COMMENTED OUT: Signal handlers for cleanup
-    // const signalHandler = async () => {
-    //   await this.stopServer();
-    //   this.cleanup(false); // Don't remove signal handlers when called from signal
-    //   this.config.onExit(0);
-    // };
+    // Setup signal handlers for graceful shutdown
+    let isShuttingDown = false;
+    const signalHandler = () => {
+      // Prevent multiple shutdown attempts
+      if (isShuttingDown) return;
+      isShuttingDown = true;
 
-    // process.on('SIGINT', signalHandler);
-    // process.on('SIGTERM', signalHandler);
+      log.info('Received shutdown signal, cleaning up...');
 
-    // this.signalHandlers.push(
-    //   { event: 'SIGINT', handler: signalHandler },
-    //   { event: 'SIGTERM', handler: signalHandler }
-    // );
+      // Perform async cleanup with timeout protection
+      Promise.race([
+        this.stopServer().then(() => {
+          this.cleanup(false); // Don't remove signal handlers when called from signal
+          this.config.onExit(0);
+        }),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Cleanup timeout')), 5000)
+        )
+      ]).catch(error => {
+        log.error({ err: error }, 'Error during shutdown');
+        this.config.onExit(1);
+      });
+    };
+
+    process.on('SIGINT', signalHandler);
+    process.on('SIGTERM', signalHandler);
+
+    this.signalHandlers.push(
+      { event: 'SIGINT', handler: signalHandler },
+      { event: 'SIGTERM', handler: signalHandler }
+    );
 
     this.timeoutInterval = setInterval(() => {
       if (this.isRestarting) {

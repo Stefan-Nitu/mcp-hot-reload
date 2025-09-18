@@ -588,4 +588,164 @@ describe('MCPHotReload Integration Tests', () => {
       expect((proxy as any).serverProcess).toBeNull();
     }, 10000);
   });
+
+  describe('Double Response Prevention', () => {
+    it('should not send duplicate initialize responses', async () => {
+      // Arrange
+      const serverPath = path.join(process.cwd(), 'test/fixtures/servers/simple-echo-server.js');
+
+      const responses: string[] = [];
+      let responseCount = 0;
+
+      const clientIn = new PassThrough();
+      const clientOut = new PassThrough();
+      const clientErr = new PassThrough();
+
+      clientOut.on('data', (data) => {
+        const lines = data.toString().split('\n').filter((line: string) => line.trim());
+        lines.forEach((line: string) => {
+          try {
+            const msg = JSON.parse(line);
+            if (msg.id === 1 && msg.result) {
+              responseCount++;
+              responses.push(line);
+            }
+          } catch (e) {}
+        });
+      });
+
+      const config = {
+        serverCommand: 'node',
+        serverArgs: [serverPath],
+        buildCommand: 'echo "No build needed"',
+        watchPattern: [],
+        cwd: testDir,
+        onExit: jest.fn()
+      };
+
+      proxy = new MCPHotReload(config, clientIn, clientOut, clientErr);
+
+      // Act
+      await proxy.start();
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      // Send initialize request
+      const initRequest = JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {}
+      }) + '\n';
+
+      clientIn.write(initRequest);
+
+      // Wait for responses
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      // Assert - should only have one response
+      expect(responseCount).toBe(1);
+      expect(responses).toHaveLength(1);
+    });
+
+    it('should not restart server immediately after initialize', async () => {
+      // Arrange
+      const restartFile = path.join(testDir, 'restarts.txt');
+      const serverPath = path.join(process.cwd(), 'test/fixtures/servers/restart-tracking-server.js');
+      process.env.RESTART_FILE = restartFile;
+
+      const clientIn = new PassThrough();
+      const clientOut = new PassThrough();
+      const clientErr = new PassThrough();
+
+      const config = {
+        serverCommand: 'node',
+        serverArgs: [serverPath],
+        buildCommand: 'echo "No build needed"',
+        watchPattern: [],
+        cwd: testDir,
+        onExit: jest.fn()
+      };
+
+      proxy = new MCPHotReload(config, clientIn, clientOut, clientErr);
+
+      // Act
+      await proxy.start();
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      // Send initialize request
+      const initRequest = JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {}
+      }) + '\n';
+
+      clientIn.write(initRequest);
+
+      // Wait to see if restart happens
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      // Assert - server should not have restarted
+      const restarts = fs.existsSync(restartFile) ? parseInt(fs.readFileSync(restartFile, 'utf-8')) : 0;
+      expect(restarts).toBe(1); // Should only have started once
+
+      // Clean up environment variable
+      delete process.env.RESTART_FILE;
+    });
+
+    it('should handle server crash without duplicating responses', async () => {
+      // Arrange
+      const responses: string[] = [];
+
+      const clientIn = new PassThrough();
+      const clientOut = new PassThrough();
+      const clientErr = new PassThrough();
+
+      clientOut.on('data', (data) => {
+        const lines = data.toString().split('\n').filter((line: string) => line.trim());
+        lines.forEach((line: string) => {
+          try {
+            const msg = JSON.parse(line);
+            if (msg.id === 1 && msg.result) {
+              responses.push(line);
+            }
+          } catch (e) {}
+        });
+      });
+
+      // Use fixture server that crashes after responding
+      const serverPath = path.join(process.cwd(), 'test/fixtures/servers/crash-after-init-server.js');
+
+      const config = {
+        serverCommand: 'node',
+        serverArgs: [serverPath],
+        buildCommand: 'echo "No build needed"',
+        watchPattern: [],
+        cwd: testDir,
+        onExit: jest.fn()
+      };
+
+      proxy = new MCPHotReload(config, clientIn, clientOut, clientErr);
+
+      // Act
+      await proxy.start();
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      // Send initialize request
+      const initRequest = JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {}
+      }) + '\n';
+
+      clientIn.write(initRequest);
+
+      // Wait for crash and potential restart
+      await new Promise(resolve => setTimeout(resolve, 3000));
+
+      // Assert - should only have one response
+      expect(responses.length).toBe(1);
+    });
+  });
 });
