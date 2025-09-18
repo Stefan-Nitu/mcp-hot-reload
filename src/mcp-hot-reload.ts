@@ -18,6 +18,7 @@ export class MCPHotReload {
   private sessionManager = new SessionManager();
   private isRestarting = false;
   private config: Required<ProxyConfig>;
+  private signalHandlers: { event: NodeJS.Signals; handler: () => void }[] = [];
 
   // Internal metrics for testing (no logs, just state tracking)
   private metrics = {
@@ -357,7 +358,7 @@ export class MCPHotReload {
     });
   }
 
-  private cleanup(): void {
+  private cleanup(removeSignalHandlers = true): void {
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer);
       this.debounceTimer = null;
@@ -374,6 +375,13 @@ export class MCPHotReload {
       this.serverProcess.kill('SIGTERM');
       this.serverProcess = null;
     }
+    // Only remove signal handlers when explicitly requested (not from signal handler itself)
+    if (removeSignalHandlers) {
+      this.signalHandlers.forEach(({ event, handler }) => {
+        process.removeListener(event, handler);
+      });
+      this.signalHandlers = [];
+    }
   }
 
   public async start(): Promise<void> {
@@ -383,17 +391,25 @@ export class MCPHotReload {
 
     this.stdin.on('data', (data) => this.handleIncomingData(data));
 
-    process.on('SIGINT', async () => {
+    const sigintHandler = async () => {
       await this.stopServer();
-      this.cleanup();
+      this.cleanup(false); // Don't remove signal handlers when called from signal
       this.config.onExit(0);
-    });
+    };
 
-    process.on('SIGTERM', async () => {
+    const sigtermHandler = async () => {
       await this.stopServer();
-      this.cleanup();
+      this.cleanup(false); // Don't remove signal handlers when called from signal
       this.config.onExit(0);
-    });
+    };
+
+    process.on('SIGINT', sigintHandler);
+    process.on('SIGTERM', sigtermHandler);
+
+    this.signalHandlers.push(
+      { event: 'SIGINT', handler: sigintHandler },
+      { event: 'SIGTERM', handler: sigtermHandler }
+    );
 
     this.timeoutInterval = setInterval(() => {
       if (this.isRestarting) {

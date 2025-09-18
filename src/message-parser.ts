@@ -18,7 +18,9 @@ export class MessageParser {
       try {
         const message = JSON.parse(line) as JSONRPCMessage;
         if (message.jsonrpc !== '2.0') {
-          console.error('[dev-proxy] Invalid JSON-RPC version:', message);
+          if (process.env.DEBUG) {
+            console.error('[dev-proxy] Invalid JSON-RPC version:', message);
+          }
           continue;
         }
         messages.push(message);

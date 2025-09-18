@@ -163,53 +163,13 @@ describe('MCPHotReload Real E2E Tests', () => {
     }, 10000);
 
     it('should handle real file changes and server restart', async () => {
-      // Arrange - Create a simple real server
-      const createServerCode = (version: string) => `#!/usr/bin/env node
-// Server version: ${version}
+      // Arrange - Use the versioned test server fixture as template
+      const fixtureServerPath = path.join(__dirname, '..', 'test-fixtures', 'versioned-test-server.js');
+      const fixtureContent = fs.readFileSync(fixtureServerPath, 'utf-8');
+      const serverPath = path.join(testDir, 'server.mjs');
 
-process.stdin.on('data', (chunk) => {
-  const lines = chunk.toString().split('\\n');
-  lines.forEach(line => {
-    if (!line.trim()) return;
-
-    try {
-      const msg = JSON.parse(line);
-
-      if (msg.method === 'initialize') {
-        const response = {
-          jsonrpc: '2.0',
-          id: msg.id,
-          result: {
-            protocolVersion: '2024-11-05',
-            serverInfo: {
-              name: 'test-server',
-              version: '${version}'
-            }
-          }
-        };
-        console.log(JSON.stringify(response));
-      } else if (msg.method === 'tools/list') {
-        const response = {
-          jsonrpc: '2.0',
-          id: msg.id,
-          result: {
-            tools: [{
-              name: 'version_tool',
-              description: 'Returns version ${version}'
-            }]
-          }
-        };
-        console.log(JSON.stringify(response));
-      }
-    } catch (e) {
-      // Parse error
-    }
-  });
-});
-`;
-
-      // Write initial server
-      fs.writeFileSync(path.join(testDir, 'server.mjs'), createServerCode('1.0.0'));
+      // Write initial server with version 1.0.0
+      fs.writeFileSync(serverPath, fixtureContent.replace(/VERSION_PLACEHOLDER/g, '1.0.0'));
       fs.mkdirSync(path.join(testDir, 'src'), { recursive: true });
       fs.writeFileSync(path.join(testDir, 'src/trigger.ts'), '// v1');
 
@@ -256,8 +216,8 @@ process.stdin.on('data', (chunk) => {
       capturedOutput.length = 0;
       capturedErrors.length = 0;
 
-      // Update server code
-      fs.writeFileSync(path.join(testDir, 'server.mjs'), createServerCode('2.0.0'));
+      // Update server code to version 2.0.0
+      fs.writeFileSync(serverPath, fixtureContent.replace(/VERSION_PLACEHOLDER/g, '2.0.0'));
 
       // Trigger file change
       fs.writeFileSync(path.join(testDir, 'src/trigger.ts'), '// v2 - changed');

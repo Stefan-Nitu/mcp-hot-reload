@@ -396,35 +396,66 @@ npm test -- --coverage
 
 ## Releasing
 
-To release a new version:
+Releases are fully automated using [semantic-release](https://semantic-release.gitbook.io/). When you push to `main`, the CD workflow will:
 
-1. Update version in `package.json` and `package-lock.json`:
-   ```bash
-   npm version patch --no-git-tag-version  # or minor/major
-   ```
-2. Commit the version bump:
-   ```bash
-   git add package*.json
-   git commit -m "Bump version to X.Y.Z"
-   ```
-3. Push to main:
-   ```bash
-   git push origin main
-   ```
-4. The CD workflow will automatically:
-   - Run all tests
-   - Publish to npm if version changed
-   - Create and push a git tag
+1. Analyze commit messages to determine version bump type
+2. Update version in `package.json` and `package-lock.json`
+3. Generate/update `CHANGELOG.md`
+4. Publish to npm
+5. Create a git tag and GitHub release
 
-**Important**: Do NOT create tags locally. Let the CD workflow handle it to ensure tags are only created after successful deployment.
+### Commit Convention
+
+This project follows [Conventional Commits](https://www.conventionalcommits.org/). Your commit messages determine the version bump:
+
+| Type | Description | Version Bump |
+|------|-------------|--------------|
+| `fix:` | Bug fixes | Patch (0.0.X) |
+| `feat:` | New features | Minor (0.X.0) |
+| `BREAKING CHANGE:` | Breaking changes | Major (X.0.0) |
+| `chore:` | Maintenance tasks | No release |
+| `docs:` | Documentation only | No release |
+| `style:` | Code style changes | No release |
+| `refactor:` | Code refactoring | No release |
+| `perf:` | Performance improvements | Patch |
+| `test:` | Test changes | No release |
+| `ci:` | CI/CD changes | No release |
+
+#### Examples
+
+```bash
+# Patch release (1.0.0 -> 1.0.1)
+git commit -m "fix: resolve file watching issue on Windows"
+
+# Minor release (1.0.1 -> 1.1.0)
+git commit -m "feat: add support for Python MCP servers"
+
+# Major release (1.1.0 -> 2.0.0)
+git commit -m "feat!: change configuration format
+
+BREAKING CHANGE: watchPattern now requires glob syntax"
+
+# No release
+git commit -m "chore: update dependencies"
+git commit -m "docs: improve README examples"
+```
+
+### Manual Release
+
+If you need to trigger a release manually:
+
+```bash
+git commit --allow-empty -m "feat: trigger release"
+git push origin main
+```
 
 ## Contributing
 
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
+We welcome contributions! Please follow the [Conventional Commits](#commit-convention) format when submitting changes.
 
 1. Fork the repository
 2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
+3. Commit your changes using conventional commits (e.g., `git commit -m 'feat: add amazing feature'`)
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
 

@@ -376,32 +376,39 @@ describe('MCPHotReload Integration Tests', () => {
         ignoreInitial: true,
         persistent: true,
         usePolling: true,
-        interval: 100
+        interval: 100,
+        awaitWriteFinish: {
+          stabilityThreshold: 500,
+          pollInterval: 100
+        }
       });
 
-      let eventCount = 0;
-      watcher.on('all', () => {
-        eventCount++;
+      const events: string[] = [];
+      watcher.on('all', (event) => {
+        events.push(event);
       });
 
       await new Promise<void>(resolve => watcher.once('ready', () => resolve()));
 
-      // Create a file
+      // Create a file with a delay to ensure it's detected
       const testFile = path.join(watchDir, 'test.txt');
+      await new Promise(resolve => setTimeout(resolve, 500));
       fs.writeFileSync(testFile, 'content');
 
-      // Wait longer for polling (Jest might be interfering with timers)
-      await new Promise(resolve => setTimeout(resolve, 3000));
+      // Wait for polling to detect the change
+      await new Promise(resolve => setTimeout(resolve, 2000));
 
       // Modify the file
-      fs.writeFileSync(testFile, 'modified');
+      fs.writeFileSync(testFile, 'modified content');
 
-      // Wait even longer
-      await new Promise(resolve => setTimeout(resolve, 3000));
+      // Wait for polling to detect the modification
+      await new Promise(resolve => setTimeout(resolve, 2000));
 
       await watcher.close();
-      expect(eventCount).toBeGreaterThan(0);
-    }, 10000);
+
+      // Should have detected at least one event (add or change)
+      expect(events.length).toBeGreaterThan(0);
+    }, 15000);
 
     it('should support glob patterns for file watching', async () => {
       // Arrange
