@@ -1,4 +1,7 @@
-![NPM Version](https://img.shields.io/npm/v/mcp-hot-reload) ![MIT licensed](https://img.shields.io/npm/l/mcp-hot-reload) ![Build Status](https://github.com/Stefan-Nitu/mcp-hot-reload/actions/workflows/test.yml/badge.svg)
+[![NPM Version](https://img.shields.io/npm/v/mcp-hot-reload)](https://www.npmjs.com/package/mcp-hot-reload)
+[![NPM Downloads](https://img.shields.io/npm/dm/mcp-hot-reload)](https://www.npmjs.com/package/mcp-hot-reload)
+[![CI Status](https://github.com/Stefan-Nitu/mcp-hot-reload/actions/workflows/ci.yml/badge.svg)](https://github.com/Stefan-Nitu/mcp-hot-reload/actions/workflows/ci.yml)
+[![MIT Licensed](https://img.shields.io/npm/l/mcp-hot-reload)](https://github.com/Stefan-Nitu/mcp-hot-reload/blob/main/LICENSE)
 
 # MCP Hot Reload
 
@@ -121,25 +124,19 @@ Create a `proxy.config.json` in your project root:
 
 #### TypeScript Server (Default)
 
-```json
-{
-  "serverArgs": ["build/server.js"],
-  "buildCommand": "tsc",
-  "watchPattern": "./src"
-}
-```
-
-#### TypeScript with Specific Patterns
+When you specify just a directory, it automatically watches TypeScript files:
 
 ```json
 {
   "serverArgs": ["dist/index.js"],
   "buildCommand": "tsc",
-  "watchPattern": ["./src/**/*.ts", "./config/**/*.json"]
+  "watchPattern": "./src"  // Watches all .ts, .tsx, .mts, .cts files
 }
 ```
 
 #### Python Server
+
+For non-TypeScript servers, use glob patterns to specify file types:
 
 ```json
 {
@@ -161,6 +158,20 @@ Create a `proxy.config.json` in your project root:
   "serverArgs": ["src/index.js"],
   "buildCommand": "echo 'No build needed'",
   "watchPattern": ["./src/**/*.js", "./src/**/*.mjs"]
+}
+```
+
+#### Multiple Directories/Patterns
+
+```json
+{
+  "serverArgs": ["dist/index.js"],
+  "buildCommand": "tsc",
+  "watchPattern": [
+    "./src",           // TypeScript files in src
+    "./lib",           // TypeScript files in lib
+    "./scripts/**/*.py" // Python scripts
+  ]
 }
 ```
 
@@ -237,7 +248,7 @@ The hot-reload tool acts as a transparent proxy between the MCP client and your 
 | `serverCommand` | `string` | `'node'` | Command to start your server |
 | `serverArgs` | `string[]` | `['dist/index.js']` | Arguments for server command |
 | `buildCommand` | `string` | `'npm run build'` | Command to rebuild your server |
-| `watchPattern` | `string \| string[]` | `'./src'` | Directories or glob patterns to watch. When a directory is specified, watches TypeScript files by default. Supports glob patterns like `**/*.py` for other languages. |
+| `watchPattern` | `string \| string[]` | `'./src'` | What to watch for changes:<br>• **Directory** (e.g., `./src`): Watches all TypeScript files<br>• **Glob pattern** (e.g., `./src/**/*.py`): Watches specific file types |
 | `debounceMs` | `number` | `300` | Milliseconds to wait before rebuilding |
 | `env` | `object` | `{}` | Environment variables for server process |
 | `cwd` | `string` | `process.cwd()` | Working directory |
@@ -277,7 +288,7 @@ Complete setup for a TypeScript MCP server:
   "serverCommand": "node",
   "serverArgs": ["dist/index.js"],
   "buildCommand": "tsc",
-  "watchPattern": ["./src/**/*.ts", "./src/**/*.json"],
+  "watchPattern": "./src",
   "debounceMs": 500
 }
 ```

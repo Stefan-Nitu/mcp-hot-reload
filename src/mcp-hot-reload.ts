@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawn, ChildProcess, execSync } from 'child_process';
-import chokidar, { FSWatcher, WatchOptions } from 'chokidar';
+import chokidar, { FSWatcher } from 'chokidar';
 import * as path from 'path';
 import { Readable, Writable } from 'stream';
 import * as micromatch from 'micromatch';
@@ -273,7 +273,7 @@ export class MCPHotReload {
     return nonGlobParts.length ? nonGlobParts.join('/') : path.dirname(globPath);
   }
 
-  private getWatcherOptions(): WatchOptions {
+  private getWatcherOptions() {
     return {
       persistent: true,
       ignoreInitial: true,
