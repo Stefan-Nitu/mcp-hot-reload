@@ -396,13 +396,21 @@ npm test -- --coverage
 
 ## Releasing
 
-Releases are fully automated using [semantic-release](https://semantic-release.gitbook.io/). When you push to `main`, the CD workflow will:
+To release a new version:
 
-1. Analyze commit messages to determine version bump type
-2. Update version in `package.json` and `package-lock.json`
-3. Generate/update `CHANGELOG.md`
-4. Publish to npm
-5. Create a git tag and GitHub release
+1. Update version in `package.json` and `package-lock.json`:
+   ```bash
+   npm version patch  # or minor/major
+   ```
+2. Commit the version bump
+3. Push to main:
+   ```bash
+   git push origin main
+   ```
+4. The CD workflow will automatically:
+   - Run all tests
+   - Publish to npm if version changed
+   - Create and push a git tag
 
 ### Commit Convention
 
