@@ -365,6 +365,60 @@ npm test -- message-parser
 npm test -- --coverage
 ```
 
+## Claude Code Configuration
+
+The MCP server configuration in Claude Code is stored in `~/.claude.json` at the top level under the `mcpServers` key.
+
+### Standard Setup (Global Installation)
+
+After installing mcp-hot-reload globally (`npm install -g mcp-hot-reload`), configure your MCP server:
+
+```json
+{
+  "mcpServers": {
+    "your-server": {
+      "type": "stdio",
+      "command": "mcp-hot-reload",
+      "args": [
+        "node",
+        "/path/to/your/mcp-server/dist/index.js",
+        "--watch",
+        "src/**/*.ts,src/**/*.js"  // Or "src/**/*.py" for Python, "src" for all types
+      ]
+    }
+  }
+}
+```
+
+### Alternative: Using Without Global Installation
+
+If you prefer not to install globally, you can run mcp-hot-reload directly from its directory:
+
+```json
+{
+  "mcpServers": {
+    "your-server": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "/path/to/mcp-hot-reload/dist/index.js",
+        "node",
+        "/path/to/your/mcp-server/dist/index.js",
+        "--watch",
+        "src/**/*.ts,src/**/*.js"
+      ]
+    }
+  }
+}
+```
+
+### Configuration Best Practices
+
+- **Always use absolute paths** for server locations to ensure the configuration works from any directory
+- **Never use `cwd`** in the configuration as it restricts where you can run Claude Code from
+- The proxy automatically derives the working directory from the server's absolute path
+- Watch patterns are resolved relative to the server's directory
+
 ## Troubleshooting
 
 ### Server not restarting

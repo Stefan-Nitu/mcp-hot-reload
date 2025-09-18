@@ -120,9 +120,9 @@ describe('MCPHotReload Unit Tests', () => {
       expect((proxy as any).config.serverArgs).toEqual(['run', 'server.ts']);
     });
 
-    it('should not start when MCP_DEV_MODE is child', () => {
+    it('should not start when MCP_PROXY_INSTANCE is set', () => {
       // Arrange
-      process.env.MCP_DEV_MODE = 'child';
+      process.env.MCP_PROXY_INSTANCE = 'test-instance';
       proxy = new MCPHotReload({ onExit: () => {} }, mockStdin, mockStdout, mockStderr);
 
       // Act
@@ -132,7 +132,7 @@ describe('MCPHotReload Unit Tests', () => {
       expect(spawn).not.toHaveBeenCalled();
 
       // Cleanup
-      delete process.env.MCP_DEV_MODE;
+      delete process.env.MCP_PROXY_INSTANCE;
     });
   });
 
@@ -206,38 +206,42 @@ describe('MCPHotReload Unit Tests', () => {
           cwd: '/test/dir',
           env: expect.objectContaining({
             TEST_VAR: 'value',
-            MCP_DEV_MODE: 'child'
+            MCP_PROXY_INSTANCE: expect.any(String)
           })
         })
       );
     });
 
-    it('should handle server exit events', async () => {
+    it('should handle server exit events by attempting restart', async () => {
       // Arrange
       const exitHandler = jest.fn();
       proxy = new MCPHotReload({ onExit: exitHandler }, mockStdin, mockStdout, mockStderr);
+      const restartSpy = jest.spyOn(proxy as any, 'debounceRestart');
 
       // Act
       await proxy.start();
       mockServerProcess.emit('exit', 0, null);
 
-      // Assert
-      expect(exitHandler).toHaveBeenCalledWith(0);
-      // Verify process reference is cleared after exit
-      expect((proxy as any).serverProcess).toBeNull();
+      // Assert - should attempt restart instead of exiting
+      expect(restartSpy).toHaveBeenCalled();
+      expect(exitHandler).not.toHaveBeenCalled();
+      // Server process should still be set (not cleared)
+      expect((proxy as any).serverProcess).not.toBeNull();
     });
 
-    it('should handle server errors', async () => {
+    it('should handle server errors by attempting restart', async () => {
       // Arrange
       const exitHandler = jest.fn();
       proxy = new MCPHotReload({ onExit: exitHandler }, mockStdin, mockStdout, mockStderr);
+      const restartSpy = jest.spyOn(proxy as any, 'debounceRestart');
 
       // Act
       await proxy.start();
       mockServerProcess.emit('error', new Error('Connection failed'));
 
-      // Assert - error triggers exit with code 1
-      expect(exitHandler).toHaveBeenCalledWith(1);
+      // Assert - should attempt restart instead of exiting
+      expect(restartSpy).toHaveBeenCalled();
+      expect(exitHandler).not.toHaveBeenCalled();
     });
   });
 
@@ -346,6 +350,20 @@ describe('MCPHotReload Unit Tests', () => {
       await restartPromise;
       expect((proxy as any).isRestarting).toBe(false);
     });
+
+    it('should not restart again if exit happens during restart', async () => {
+      // Arrange
+      proxy = new MCPHotReload({ onExit: () => {} }, mockStdin, mockStdout, mockStderr);
+      await proxy.start();
+      const restartSpy = jest.spyOn(proxy as any, 'debounceRestart');
+
+      // Act - simulate exit during restart
+      (proxy as any).isRestarting = true;
+      mockServerProcess.emit('exit', 0, null);
+
+      // Assert - should not attempt another restart
+      expect(restartSpy).not.toHaveBeenCalled();
+    });
   });
 
   describe('Cleanup', () => {
@@ -445,6 +463,35 @@ describe('MCPHotReload Unit Tests', () => {
       expect(output).toContain('"id":123');
       expect(output).toContain('"error"');
       expect(output).toContain('timed out');
+    });
+  });
+
+  describe('Double Initialize Response Prevention', () => {
+    it('should only output initialize response once', async () => {
+      // Arrange
+      const outputChunks: string[] = [];
+      mockStdout.on('data', (chunk) => {
+        outputChunks.push(chunk.toString());
+      });
+
+      proxy = new MCPHotReload({ onExit: () => {} }, mockStdin, mockStdout, mockStderr);
+      await proxy.start();
+
+      // Mock server process sending a response
+      const initResponse = '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"test","capabilities":{}}}\n';
+
+      // Act - simulate initialize request
+      const initRequest = Buffer.from('{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}\n');
+      (proxy as any).handleIncomingData(initRequest);
+
+      // Simulate server responding
+      mockServerProcess.stdout.emit('data', Buffer.from(initResponse));
+
+      // Assert - response should only be written once to stdout
+      const responses = outputChunks.filter(chunk =>
+        chunk.includes('"id":1') && chunk.includes('"result"')
+      );
+      expect(responses).toHaveLength(1);
     });
   });
 });

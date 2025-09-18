@@ -34,7 +34,11 @@ describe('MCPHotReload Real E2E Tests', () => {
   afterEach(async () => {
     // Clean up real processes and files
     if (proxy) {
-      await proxy.stop();
+      try {
+        await proxy.stop();
+      } catch (e) {
+        // Ignore cleanup errors
+      }
       proxy = null;
     }
 

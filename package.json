@@ -2,10 +2,10 @@
   "name": "mcp-hot-reload",
   "version": "1.1.0",
   "description": "Hot-reload development tool for MCP (Model Context Protocol) servers with session preservation",
-  "main": "dist/mcp-hot-reload.js",
+  "main": "dist/index.js",
   "type": "module",
   "bin": {
-    "mcp-hot-reload": "dist/mcp-hot-reload.js"
+    "mcp-hot-reload": "dist/index.js"
   },
   "engines": {
     "node": ">=18.0.0"

@@ -15,6 +15,9 @@ export class SessionManager {
 
   handleClientMessage(message: JSONRPCMessage, raw: string): boolean {
     if (message.method === 'initialize' && message.id) {
+      if (process.env.DEBUG) {
+        console.error('[SessionManager] Storing initialize request');
+      }
       this.initializeRequest = message as MCPInitializeRequest;
       this.isInitialized = false;
       return true;
@@ -63,6 +66,9 @@ export class SessionManager {
   }
 
   getInitializeRequest(): string | null {
+    if (process.env.DEBUG) {
+      console.error(`[SessionManager] getInitializeRequest called, has request: ${!!this.initializeRequest}`);
+    }
     return this.initializeRequest ? JSON.stringify(this.initializeRequest) + '\n' : null;
   }
 
