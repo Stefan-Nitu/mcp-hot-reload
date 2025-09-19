@@ -33,6 +33,7 @@ jobs:
 
     - name: Verify build output
       run: |
-        test -f dist/mcp-hot-reload.js
+        test -f dist/index.js
+        test -f dist/mcp-proxy.js
         test -f dist/message-parser.js
-        test -f dist/session-manager.js
+        test -f dist/session-tracker.js
