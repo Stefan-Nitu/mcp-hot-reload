@@ -61,16 +61,22 @@ npx mcp-hot-reload
 
 ### Basic Usage
 
-In your MCP server directory:
+In your MCP server directory, provide the server command:
 
 ```bash
-npx mcp-hot-reload
+npx mcp-hot-reload node dist/index.js
+```
+
+Or with a configuration file (`proxy.config.json`):
+
+```bash
+npx mcp-hot-reload  # Uses settings from proxy.config.json
 ```
 
 This will:
-1. Start your server (`node dist/index.js`)
-2. Watch the `src/` directory for changes
-3. Run `npm run build` when files change
+1. Start your server with the specified command
+2. Watch the `src/` directory for changes (default)
+3. Run `npm run build` when files change (default)
 4. Restart the server while preserving the session
 
 ### Integration with Claude Desktop
