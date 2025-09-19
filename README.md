@@ -204,7 +204,7 @@ For non-TypeScript servers, use glob patterns to specify file types:
 The hot-reload tool acts as a transparent proxy between the MCP client and your server:
 
 ```
-┌──────────┐     STDIO/JSON-RPC     ┌─────────────────┐     STDIO/JSON-RPC     ┌──────────────┐
+┌──────────┐     STDIO/JSON-RPC      ┌─────────────────┐     STDIO/JSON-RPC      ┌──────────────┐
 │  Claude  │ ◄─────────────────────► │ mcp-hot-reload  │ ◄─────────────────────► │  MCP Server  │
 └──────────┘                         └─────────────────┘                         └──────────────┘
                                              │
