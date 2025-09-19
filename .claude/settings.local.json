@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Read(//Users/stefan/Projects/mcp-servers/mcp-xcode-server/docs/**)"
-    ],
-    "deny": [],
-    "ask": []
-  }
-}

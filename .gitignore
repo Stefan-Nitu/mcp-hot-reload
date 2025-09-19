@@ -4,4 +4,5 @@ dist/
 .DS_Store
 coverage/
 *.tsbuildinfo
-test-server-tmp/
+test-server-tmp/claude-config-snippet.json
+.claude/

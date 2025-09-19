@@ -1,11 +1,12 @@
 {
   "mcp-xcode-server": {
     "type": "stdio",
-    "command": "node",
+    "command": "mcp-hot-reload",
     "args": [
-      "/Users/stefan/Projects/mcp-servers/mcp-hot-reload/dist/index.js",
       "node",
-      "/Users/stefan/Projects/mcp-servers/mcp-xcode-server/dist/index.js"
+      "/Users/stefan/Projects/mcp-servers/mcp-xcode-server/dist/index.js",
+      "--watch",
+      "src/**/*.ts,src/**/*.js"
     ]
   }
 }
