@@ -9,6 +9,8 @@ describe('MessageQueue', () => {
   });
 
   it('adds messages to queue', () => {
+    // Arrange - queue starts empty via beforeEach
+
     // Act
     queue.add('message1');
     queue.add('message2');
@@ -56,9 +58,11 @@ describe('MessageQueue', () => {
     expect(queue.flush()).toEqual([]);
   });
 
-  it('reports correct size', () => {
+  it('reports correct size as messages are added and removed', () => {
+    // Arrange - queue starts empty
     expect(queue.size()).toBe(0);
 
+    // Act & Assert - test size changes with operations
     queue.add('message1');
     expect(queue.size()).toBe(1);
 

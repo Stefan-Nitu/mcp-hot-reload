@@ -61,14 +61,19 @@ describe('MessageRouter', () => {
       expect(serverData).toEqual([message]);
     });
 
-    it('should queue messages when server is not connected', () => {
-      // Arrange
+    it('should queue messages when server is unavailable', () => {
+      // Arrange - Test multiple unavailable conditions
       const message = '{"jsonrpc":"2.0","id":1,"method":"test"}\n';
 
-      // Act
+      // Act & Assert - Not connected
       clientIn.write(message);
+      expect(messageQueue.add).toHaveBeenCalledWith(message);
+      messageQueue.add.mockClear();
 
-      // Assert
+      // Act & Assert - After disconnection
+      router.connectServer(serverIn, serverOut);
+      router.disconnectServer();
+      clientIn.write(message);
       expect(messageQueue.add).toHaveBeenCalledWith(message);
     });
 
@@ -146,7 +151,7 @@ describe('MessageRouter', () => {
       expect(messageQueue.add).toHaveBeenCalledWith(message);
     });
 
-    it('should handle malformed JSON gracefully', () => {
+    it('should skip malformed JSON messages without crashing', () => {
       // Arrange
       const serverData: string[] = [];
       serverIn.on('data', chunk => serverData.push(chunk.toString()));
@@ -271,7 +276,7 @@ describe('MessageRouter', () => {
       expect(messageQueue.add).toHaveBeenCalledWith(message);
     });
 
-    it('should handle clientOut.write() exceptions gracefully', () => {
+    it('should continue routing when clientOut.write() throws exceptions', () => {
       // Arrange
       const mockClientOut = new PassThrough();
       const mockWrite = jest.fn<any>(() => {
@@ -321,8 +326,8 @@ describe('MessageRouter', () => {
   });
 
   describe('stream state validation', () => {
-    it('should queue messages when serverIn is destroyed', () => {
-      // Arrange
+    it('should queue messages when server stream is not usable', () => {
+      // Arrange - Test destroyed stream
       router.connectServer(serverIn, serverOut);
       serverIn.destroy();
       const message = '{"jsonrpc":"2.0","id":1,"method":"test"}\n';
@@ -332,10 +337,9 @@ describe('MessageRouter', () => {
 
       // Assert
       expect(messageQueue.add).toHaveBeenCalledWith(message);
-    });
+      messageQueue.add.mockClear();
 
-    it('should queue messages when serverIn is not writable', () => {
-      // Arrange
+      // Arrange - Test non-writable stream
       const mockServerIn = new PassThrough();
       Object.defineProperty(mockServerIn, 'writable', {
         value: false,
@@ -343,12 +347,10 @@ describe('MessageRouter', () => {
       });
       router.connectServer(mockServerIn, serverOut);
 
-      const message = '{"jsonrpc":"2.0","id":1,"method":"test"}\n';
-
       // Act
       clientIn.write(message);
 
-      // Assert
+      // Assert - Non-writable stream should queue
       expect(messageQueue.add).toHaveBeenCalledWith(message);
     });
 
@@ -421,7 +423,7 @@ describe('MessageRouter', () => {
       expect(messageQueue.add).not.toHaveBeenCalled();
     });
 
-    it('should handle null-like data chunks gracefully', () => {
+    it('should ignore null or undefined data chunks without errors', () => {
       // Arrange
       const serverData: string[] = [];
       serverIn.on('data', chunk => serverData.push(chunk.toString()));

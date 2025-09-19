@@ -15,8 +15,6 @@ export interface FileWatcherConfig {
 export class FileWatcher {
   private watcher: FSWatcher | null = null;
   private config: Required<Omit<FileWatcherConfig, 'onChange'>> & { onChange: () => void };
-  private isPaused = false;
-  private changedDuringPause = false;
   private debounceTimer: NodeJS.Timeout | null = null;
   private filePatterns: string[] = [];
 
@@ -62,23 +60,7 @@ export class FileWatcher {
       clearTimeout(this.debounceTimer);
       this.debounceTimer = null;
     }
-    this.isPaused = false;
-    this.changedDuringPause = false;
     log.debug('Stopped watching');
-  }
-
-  pause(): boolean {
-    this.isPaused = true;
-    const hadChanges = this.changedDuringPause;
-    this.changedDuringPause = false;
-    log.debug({ hadChanges }, 'Paused watching');
-    return hadChanges;
-  }
-
-  resume(): void {
-    this.isPaused = false;
-    this.changedDuringPause = false;
-    log.debug('Resumed watching');
   }
 
   private handleChange(filePath: string): void {
@@ -88,11 +70,6 @@ export class FileWatcher {
     }
 
     log.debug({ filePath }, 'File change detected');
-
-    if (this.isPaused) {
-      this.changedDuringPause = true;
-      return;
-    }
 
     if (this.config.debounceMs > 0) {
       if (this.debounceTimer) {

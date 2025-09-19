@@ -16,12 +16,11 @@ describe('HotReload', () => {
     jest.clearAllMocks();
 
     mockBuildRunner = {
-      run: jest.fn<() => boolean>()
+      run: jest.fn<() => Promise<boolean>>(),
+      cancel: jest.fn<() => void>()
     } as unknown as jest.Mocked<BuildRunner>;
 
     mockFileWatcher = {
-      pause: jest.fn<() => boolean>(),
-      resume: jest.fn<() => void>(),
       start: jest.fn<() => void>(),
       stop: jest.fn<() => void>()
     } as unknown as jest.Mocked<FileWatcher>;
@@ -40,10 +39,22 @@ describe('HotReload', () => {
   });
 
   describe('handleFileChange', () => {
+    it('should cancel any ongoing build before starting a new one', async () => {
+      // Arrange
+      mockBuildRunner.run.mockResolvedValue(true);
+
+      // Act
+      await hotReload.handleFileChange();
+
+      // Assert
+      expect(mockBuildRunner.cancel).toHaveBeenCalledTimes(1);
+      expect(mockBuildRunner.run).toHaveBeenCalledTimes(1);
+      expect(mockOnRestart).toHaveBeenCalledTimes(1);
+    });
+
     it('should build and restart when build succeeds', async () => {
       // Arrange
-      mockBuildRunner.run.mockReturnValue(true);
-      mockFileWatcher.pause.mockReturnValue(false); // No changes during build
+      mockBuildRunner.run.mockResolvedValue(true);
 
       // Act
       await hotReload.handleFileChange();
@@ -51,109 +62,34 @@ describe('HotReload', () => {
       // Assert
       expect(mockBuildRunner.run).toHaveBeenCalled();
       expect(mockOnRestart).toHaveBeenCalledTimes(1);
-      expect(mockFileWatcher.pause).toHaveBeenCalled();
-      expect(mockFileWatcher.resume).toHaveBeenCalled();
     });
 
     it('should not restart when build fails', async () => {
       // Arrange
-      mockBuildRunner.run.mockReturnValue(false);
-      mockFileWatcher.pause.mockReturnValue(false);
+      mockBuildRunner.run.mockResolvedValue(false);
 
       // Act
       await hotReload.handleFileChange();
 
       // Assert
+      expect(mockBuildRunner.cancel).toHaveBeenCalledTimes(1);
       expect(mockBuildRunner.run).toHaveBeenCalledTimes(1);
       expect(mockOnRestart).not.toHaveBeenCalled();
     });
 
-    it('should retry build when files change during failed build', async () => {
+    it('should handle multiple file changes by cancelling and restarting', async () => {
       // Arrange
-      mockBuildRunner.run
-        .mockReturnValueOnce(false)  // First build fails
-        .mockReturnValueOnce(true);  // Second build succeeds
+      mockBuildRunner.run.mockResolvedValue(true);
 
-      mockFileWatcher.pause
-        .mockReturnValueOnce(false)  // No change before first build
-        .mockReturnValueOnce(true)   // Files changed during first build
-        .mockReturnValueOnce(false)  // No change before second build
-        .mockReturnValueOnce(false); // No change during second build
-
-      // Act
+      // Act - Simulate rapid file changes
+      await hotReload.handleFileChange();
+      await hotReload.handleFileChange();
       await hotReload.handleFileChange();
 
-      // Assert
-      expect(mockBuildRunner.run).toHaveBeenCalledTimes(2);
-      expect(mockOnRestart).toHaveBeenCalledTimes(1);
-    });
-
-    it('should rebuild when files change during successful build', async () => {
-      // Arrange
-      mockBuildRunner.run.mockReturnValue(true); // All builds succeed
-
-      mockFileWatcher.pause
-        .mockReturnValueOnce(false)  // No change before first build
-        .mockReturnValueOnce(true)   // Files changed during first build
-        .mockReturnValueOnce(false)  // No change before second build
-        .mockReturnValueOnce(false); // No change during second build
-
-      // Act
-      await hotReload.handleFileChange();
-
-      // Assert
-      expect(mockBuildRunner.run).toHaveBeenCalledTimes(2);
-      expect(mockOnRestart).toHaveBeenCalledTimes(2);
-    });
-
-    it('should stop after max build attempts', async () => {
-      // Arrange
-      mockBuildRunner.run.mockReturnValue(true); // All builds succeed
-
-      // Always return true to simulate continuous file changes
-      mockFileWatcher.pause.mockReturnValue(true);
-
-      // Act
-      await hotReload.handleFileChange();
-
-      // Assert - Should stop at 3 attempts (MAX_BUILD_ATTEMPTS)
+      // Assert - Cancel should be called before each build
+      expect(mockBuildRunner.cancel).toHaveBeenCalledTimes(3);
       expect(mockBuildRunner.run).toHaveBeenCalledTimes(3);
       expect(mockOnRestart).toHaveBeenCalledTimes(3);
-    });
-
-    it('should handle file changes during delay between builds', async () => {
-      // Arrange
-      mockBuildRunner.run.mockReturnValue(true);
-
-      let pauseCallCount = 0;
-      mockFileWatcher.pause.mockImplementation(() => {
-        pauseCallCount++;
-        // Return pattern: before-build, during-build, during-delay
-        if (pauseCallCount === 2) return true;  // Changed during first build
-        if (pauseCallCount === 3) return true;  // Changed during delay
-        return false;
-      });
-
-      // Act
-      await hotReload.handleFileChange();
-
-      // Assert
-      expect(mockBuildRunner.run).toHaveBeenCalledTimes(2);
-      expect(mockOnRestart).toHaveBeenCalledTimes(2);
-    });
-
-    it('should always resume file watching after completion', async () => {
-      // Arrange
-      mockBuildRunner.run.mockReturnValue(false); // Build fails
-      mockFileWatcher.pause.mockReturnValue(false);
-
-      // Act
-      await hotReload.handleFileChange();
-
-      // Assert - Final resume should be called
-      const resumeCalls = mockFileWatcher.resume.mock.calls.length;
-      expect(resumeCalls).toBeGreaterThan(0);
-      expect(mockFileWatcher.resume).toHaveBeenLastCalledWith();
     });
   });
 
@@ -174,7 +110,7 @@ describe('HotReload', () => {
       expect(mockFileWatcher.stop).toHaveBeenCalledTimes(1);
     });
 
-    it('should handle multiple start calls gracefully', () => {
+    it('should allow multiple start calls without errors', () => {
       // Act
       hotReload.start();
       hotReload.start();
@@ -184,7 +120,7 @@ describe('HotReload', () => {
       expect(mockFileWatcher.start).toHaveBeenCalledTimes(3);
     });
 
-    it('should handle multiple stop calls gracefully', () => {
+    it('should allow multiple stop calls without errors', () => {
       // Act
       hotReload.stop();
       hotReload.stop();
@@ -207,50 +143,18 @@ describe('HotReload', () => {
   });
 
   describe('error handling', () => {
-    it('should handle onRestart callback failures gracefully', async () => {
+    it('should propagate onRestart callback errors to caller', async () => {
       // Arrange
       const restartError = new Error('Server restart failed');
       mockOnRestart.mockRejectedValue(restartError);
-      mockBuildRunner.run.mockReturnValue(true);
-      mockFileWatcher.pause.mockReturnValue(false);
+      mockBuildRunner.run.mockResolvedValue(true);
 
-      // Act & Assert - Should not throw
+      // Act & Assert - Should throw when restart fails
       await expect(hotReload.handleFileChange()).rejects.toThrow('Server restart failed');
 
       // Verify build was attempted and restart was called
       expect(mockBuildRunner.run).toHaveBeenCalledTimes(1);
       expect(mockOnRestart).toHaveBeenCalledTimes(1);
-    });
-
-    it('should handle fileWatcher pause exceptions', async () => {
-      // Arrange
-      const watcherError = new Error('FileWatcher pause failed');
-      mockFileWatcher.pause.mockImplementation(() => {
-        throw watcherError;
-      });
-      mockBuildRunner.run.mockReturnValue(true);
-
-      // Act & Assert - Should not throw, but propagate error
-      await expect(hotReload.handleFileChange()).rejects.toThrow('FileWatcher pause failed');
-
-      // Verify buildRunner was not called due to watcher failure
-      expect(mockBuildRunner.run).not.toHaveBeenCalled();
-    });
-
-    it('should handle fileWatcher resume exceptions', async () => {
-      // Arrange
-      const watcherError = new Error('FileWatcher resume failed');
-      mockFileWatcher.pause.mockReturnValue(false);
-      mockFileWatcher.resume.mockImplementation(() => {
-        throw watcherError;
-      });
-      mockBuildRunner.run.mockReturnValue(true);
-
-      // Act & Assert - Should not throw, but propagate error
-      await expect(hotReload.handleFileChange()).rejects.toThrow('FileWatcher resume failed');
-
-      // Verify build was attempted
-      expect(mockBuildRunner.run).toHaveBeenCalledTimes(1);
     });
 
     it('should handle fileWatcher start exceptions', () => {
@@ -279,8 +183,7 @@ describe('HotReload', () => {
   describe('concurrent operations', () => {
     it('should handle multiple concurrent handleFileChange calls', async () => {
       // Arrange
-      mockBuildRunner.run.mockReturnValue(true);
-      mockFileWatcher.pause.mockReturnValue(false);
+      mockBuildRunner.run.mockResolvedValue(true);
 
       // Delay the onRestart callback to simulate concurrent execution
       let restartCount = 0;
@@ -306,11 +209,10 @@ describe('HotReload', () => {
     it('should handle concurrent operations with mixed success/failure', async () => {
       // Arrange
       let buildCallCount = 0;
-      mockBuildRunner.run.mockImplementation(() => {
+      mockBuildRunner.run.mockImplementation(async () => {
         buildCallCount++;
         return buildCallCount % 2 === 1; // Alternate success/failure
       });
-      mockFileWatcher.pause.mockReturnValue(false);
 
       // Act
       const promises = [
@@ -330,8 +232,7 @@ describe('HotReload', () => {
   describe('stop during active operations', () => {
     it('should handle stop call during active handleFileChange', async () => {
       // Arrange
-      mockBuildRunner.run.mockReturnValue(true);
-      mockFileWatcher.pause.mockReturnValue(false);
+      mockBuildRunner.run.mockResolvedValue(true);
 
       // Mock onRestart to simulate delay and call stop during execution
       let stopCalled = false;
@@ -353,8 +254,7 @@ describe('HotReload', () => {
 
     it('should handle multiple stops during active operations', async () => {
       // Arrange
-      mockBuildRunner.run.mockReturnValue(true);
-      mockFileWatcher.pause.mockReturnValue(false);
+      mockBuildRunner.run.mockResolvedValue(true);
 
       let stopCallCount = 0;
       mockOnRestart.mockImplementation(async () => {
@@ -375,8 +275,7 @@ describe('HotReload', () => {
 
     it('should complete active operations before stopping', async () => {
       // Arrange
-      mockBuildRunner.run.mockReturnValue(true);
-      mockFileWatcher.pause.mockReturnValue(false);
+      mockBuildRunner.run.mockResolvedValue(true);
 
       let operationCompleted = false;
       mockOnRestart.mockImplementation(async () => {

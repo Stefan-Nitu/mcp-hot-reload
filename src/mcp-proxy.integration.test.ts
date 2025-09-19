@@ -558,7 +558,7 @@ describe('MCPProxy Integration Tests', () => {
   });
 
   describe('Error Handling', () => {
-    it('should handle build failures gracefully', async () => {
+    it('should continue running after build failures and wait for fixes', async () => {
       // Arrange
       const serverPath = path.join(testDir, 'server.js');
       fs.copyFileSync(TEST_SERVER_PATH, serverPath);

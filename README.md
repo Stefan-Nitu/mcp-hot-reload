@@ -42,6 +42,7 @@ Key benefits:
 - **Session state preservation** - Maintains context across server restarts
 - **Protocol compliance** - Properly handles MCP protocol requirements
 - **Flexible file watching** - Supports glob patterns for any programming language
+- **Smart build handling** - Automatically detects when builds are needed (supports both compiled and interpreted languages)
 
 ## Installation
 
@@ -148,7 +149,7 @@ For non-TypeScript servers, use glob patterns to specify file types:
 {
   "serverCommand": "python",
   "serverArgs": ["-u", "src/server.py"],
-  "buildCommand": "echo 'No build needed'",
+  "buildCommand": "",  // Empty for interpreted languages
   "watchPattern": ["./src/**/*.py"],
   "env": {
     "PYTHONUNBUFFERED": "1"
@@ -162,7 +163,7 @@ For non-TypeScript servers, use glob patterns to specify file types:
 {
   "serverCommand": "node",
   "serverArgs": ["src/index.js"],
-  "buildCommand": "echo 'No build needed'",
+  "buildCommand": "",  // Empty for interpreted languages
   "watchPattern": ["./src/**/*.js", "./src/**/*.mjs"]
 }
 ```
@@ -202,6 +203,97 @@ For non-TypeScript servers, use glob patterns to specify file types:
   "watchPattern": ["./src/**/*.ts"]
 }
 ```
+
+## Build Commands - When Are They Needed?
+
+The `buildCommand` determines what happens before server restart. Understanding when builds are required helps optimize your development workflow:
+
+### Compiled Languages (Build Required)
+
+Languages that compile to different output need a build step:
+
+```json
+{
+  "serverCommand": "node",
+  "serverArgs": ["dist/index.js"],  // Running compiled output
+  "buildCommand": "tsc",              // Must compile TypeScript → JavaScript
+  "watchPattern": "./src/**/*.ts"
+}
+```
+
+### Interpreted Languages (No Build Needed)
+
+Languages that run source directly can skip the build:
+
+```json
+{
+  "serverCommand": "python",
+  "serverArgs": ["src/server.py"],   // Running source directly
+  "buildCommand": "",                 // Empty - Python doesn't need compilation
+  "watchPattern": "./src/**/*.py"
+}
+```
+
+### Quick Reference
+
+| Language | Build Needed? | Example buildCommand | Why? |
+|----------|--------------|---------------------|------|
+| TypeScript → JavaScript | ✅ Yes | `tsc` or `npm run build` | Compiles to JavaScript |
+| Python | ❌ No | `""` (empty) | Interprets source directly |
+| JavaScript | ❌ No | `""` or optional linter | Runs source directly |
+| Go | ✅ Yes | `go build` | Compiles to binary |
+| Rust | ✅ Yes | `cargo build` | Compiles to binary |
+| Ruby | ❌ No | `""` (empty) | Interprets source directly |
+| C/C++ | ✅ Yes | `make` or `gcc` | Compiles to binary |
+
+**Rule of thumb:** If `serverArgs` points to compiled output (`dist/`, `build/`, `.exe`), you need a build. If it points to source files (`.py`, `.js`, `.rb`), build is optional.
+
+## Performance Optimization
+
+### Watch Pattern Best Practices
+
+For large projects, specific watch patterns prevent performance issues:
+
+#### ❌ Avoid Overly Broad Patterns
+
+```json
+{
+  "watchPattern": "."  // Watches ENTIRE project including node_modules!
+}
+```
+
+**Problems:**
+- High CPU usage from watching thousands of files
+- Slow startup while indexing files
+- False rebuilds from unrelated file changes
+
+#### ✅ Use Specific Patterns
+
+```json
+{
+  "watchPattern": "./src/**/*.ts"  // Only TypeScript files in src
+}
+```
+
+#### ✅ Watch Multiple Specific Directories
+
+```json
+{
+  "watchPattern": [
+    "./src/**/*.ts",
+    "./lib/**/*.ts",
+    "./config/**/*.json"
+  ]
+}
+```
+
+### Performance Tips
+
+- **Be specific with extensions:** Use `*.ts` not `*`
+- **Exclude generated files:** Don't watch `dist/`, `build/`, `coverage/`
+- **Auto-excluded:** The proxy automatically ignores `node_modules/`, `.git/`, and `dist/`
+- **Use debouncing:** Increase `debounceMs` for projects with many files
+- **Monitor performance:** Use `top` or Activity Monitor to check CPU usage
 
 ## How It Works
 
@@ -253,8 +345,8 @@ The hot-reload tool acts as a transparent proxy between the MCP client and your 
 |--------|------|---------|-------------|
 | `serverCommand` | `string` | `'node'` | Command to start your server |
 | `serverArgs` | `string[]` | `['dist/index.js']` | Arguments for server command |
-| `buildCommand` | `string` | `'npm run build'` | Command to rebuild your server |
-| `watchPattern` | `string \| string[]` | `'./src'` | What to watch for changes:<br>• **Directory** (e.g., `./src`): Watches all TypeScript files<br>• **Glob pattern** (e.g., `./src/**/*.py`): Watches specific file types |
+| `buildCommand` | `string` | `'npm run build'` | Command to rebuild your server (can be empty for interpreted languages) |
+| `watchPattern` | `string \| string[]` | `'./src'` | What to watch for changes:<br>• **Directory** (e.g., `./src`): Watches all TypeScript files<br>• **Glob pattern** (e.g., `./src/**/*.py`): Watches specific file types<br>• **Performance tip:** Be specific to avoid watching unnecessary files |
 | `debounceMs` | `number` | `300` | Milliseconds to wait before rebuilding |
 | `env` | `object` | `{}` | Environment variables for server process |
 | `cwd` | `string` | `process.cwd()` | Working directory |
@@ -325,7 +417,7 @@ Setup for a Python MCP server:
 {
   "serverCommand": "python",
   "serverArgs": ["-u", "src/server.py"],
-  "buildCommand": "python -m py_compile src/**/*.py",
+  "buildCommand": "",  // Python doesn't need a build step
   "watchPattern": ["./src/**/*.py"],
   "env": {
     "PYTHONUNBUFFERED": "1"
@@ -372,7 +464,7 @@ npm test
 npm test -- message-parser
 
 # Generate coverage report
-npm test -- --coverage
+npm run test:coverage
 ```
 
 ## Claude Code Configuration
@@ -436,6 +528,7 @@ If you prefer not to install globally, you can run mcp-hot-reload directly from 
 - Verify your build command succeeds: `npm run build`
 - Check file watch patterns match your source files
 - Look for build errors in console output
+- Ensure watch patterns use correct glob syntax
 
 ### Messages being lost
 
@@ -445,8 +538,10 @@ If you prefer not to install globally, you can run mcp-hot-reload directly from 
 
 ### High CPU usage
 
-- Increase debounce time to reduce rebuild frequency
-- Check for recursive file watch patterns
+- **Use specific watch patterns** instead of watching entire directories
+- **Increase debounce time** to reduce rebuild frequency
+- **Check watch pattern specificity** - avoid patterns like `"."`
+- **Verify exclusions** are working (node_modules should not trigger changes)
 - Ensure build process terminates properly
 
 ### Common Issues

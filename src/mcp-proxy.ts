@@ -81,6 +81,12 @@ export class MCPProxy {
     );
 
     // Setup hot reload
+    if (!this.config.buildCommand || !this.config.buildCommand.trim()) {
+      log.warn('No build command configured. Server will restart on file changes without building.');
+    } else {
+      log.info(`Build command: ${this.config.buildCommand}`);
+    }
+
     const buildRunner = new BuildRunner(this.config.buildCommand, this.config.cwd);
     const fileWatcher = new FileWatcher({
       patterns: this.config.watchPattern,

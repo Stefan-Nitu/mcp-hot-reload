@@ -79,7 +79,7 @@ describe('MessageParser', () => {
       expect(messages).toHaveLength(0);
     });
 
-    it('should handle invalid JSON gracefully', () => {
+    it('should skip invalid JSON lines and parse valid ones', () => {
       // Arrange
       const data = '{invalid json}\n{"jsonrpc":"2.0","method":"test","id":1}\n';
 

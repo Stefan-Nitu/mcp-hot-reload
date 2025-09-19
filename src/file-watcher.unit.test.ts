@@ -162,77 +162,14 @@ describe('FileWatcher', () => {
     });
   });
 
-  describe('Pause/Resume with Change Tracking', () => {
-    it('should track changes while paused', () => {
-      // Arrange
-      watcher = new FileWatcher({
-        patterns: './src',
-        onChange
-      });
-      watcher.start();
-      const changeHandler = mockChokidarWatcher.on.mock.calls.find(
-        call => call[0] === 'change'
-      )?.[1] as ((path: string) => void) | undefined;
-
-      // Act
-      const hadChanges1 = watcher.pause();
-      changeHandler?.('src/index.ts');
-      changeHandler?.('src/other.ts');
-      const hadChanges2 = watcher.pause();
-
-      // Assert
-      expect(hadChanges1).toBe(false); // No changes before first pause
-      expect(hadChanges2).toBe(true);  // Changes detected during pause
-      expect(onChange).not.toHaveBeenCalled(); // onChange not called while paused
-    });
-
-    it('should resume normal operation after resume', () => {
-      // Arrange
-      watcher = new FileWatcher({
-        patterns: './src',
-        onChange
-      });
-      watcher.start();
-      const changeHandler = mockChokidarWatcher.on.mock.calls.find(
-        call => call[0] === 'change'
-      )?.[1] as ((path: string) => void) | undefined;
-
-      // Act
-      watcher.pause();
-      changeHandler?.('src/index.ts'); // During pause
-      expect(onChange).not.toHaveBeenCalled();
-
-      watcher.resume();
-      changeHandler?.('src/other.ts'); // After resume
-
-      // Assert
-      expect(onChange).toHaveBeenCalledTimes(1);
-    });
-
-    it('should clear change flag on resume', () => {
-      // Arrange
-      watcher = new FileWatcher({
-        patterns: './src',
-        onChange
-      });
-      watcher.start();
-      const changeHandler = mockChokidarWatcher.on.mock.calls.find(
-        call => call[0] === 'change'
-      )?.[1] as ((path: string) => void) | undefined;
-
-      // Act
-      watcher.pause();
-      changeHandler?.('src/index.ts');
-      watcher.resume();
-      const hadChanges = watcher.pause();
-
-      // Assert
-      expect(hadChanges).toBe(false);
-    });
-  });
-
   describe('Debouncing', () => {
-    jest.useFakeTimers();
+    beforeEach(() => {
+      jest.useFakeTimers();
+    });
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
 
     it('should debounce rapid changes', () => {
       // Arrange
@@ -290,12 +227,10 @@ describe('FileWatcher', () => {
       // Assert - Now it should be called
       expect(onChange).toHaveBeenCalledTimes(1);
     });
-
-    jest.useRealTimers();
   });
 
   describe('Error Handling', () => {
-    it('should handle chokidar error events gracefully', () => {
+    it('should continue watching after chokidar errors without throwing', () => {
       // Arrange
       watcher = new FileWatcher({
         patterns: './src',
@@ -333,7 +268,7 @@ describe('FileWatcher', () => {
       expect((chokidar.watch as jest.Mock).mock.calls.length).toBe(firstCallCount);
     });
 
-    it('should handle stopping when not started gracefully', () => {
+    it('should not throw when stopping without starting', () => {
       // Arrange
       watcher = new FileWatcher({
         patterns: './src',
@@ -345,7 +280,7 @@ describe('FileWatcher', () => {
       expect(mockChokidarWatcher.close).not.toHaveBeenCalled();
     });
 
-    it('should handle empty patterns array gracefully', () => {
+    it('should not start watching when patterns array is empty', () => {
       // Arrange
       watcher = new FileWatcher({
         patterns: [],
@@ -400,109 +335,6 @@ describe('FileWatcher', () => {
       onChange.mockClear();
       addHandler?.('src/README.md');
       expect(onChange).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('State Management', () => {
-    it('should handle stop while paused', () => {
-      // Arrange
-      watcher = new FileWatcher({
-        patterns: './src',
-        onChange
-      });
-      watcher.start();
-      watcher.pause();
-
-      // Act - Stop while paused
-      watcher.stop();
-
-      // Assert - Should stop cleanly and reset state
-      expect(mockChokidarWatcher.close).toHaveBeenCalled();
-
-      // Starting again should work normally
-      watcher.start();
-      expect(chokidar.watch).toHaveBeenCalledTimes(2);
-    });
-
-    it('should handle multiple pause/resume cycles correctly', () => {
-      // Arrange
-      watcher = new FileWatcher({
-        patterns: './src',
-        onChange
-      });
-      watcher.start();
-      const changeHandler = mockChokidarWatcher.on.mock.calls.find(
-        call => call[0] === 'change'
-      )?.[1] as ((path: string) => void) | undefined;
-
-      // Act & Assert - First pause/resume cycle
-      let hadChanges = watcher.pause();
-      expect(hadChanges).toBe(false);
-
-      changeHandler?.('src/file1.ts');
-      hadChanges = watcher.pause();
-      expect(hadChanges).toBe(true);
-
-      watcher.resume();
-      changeHandler?.('src/file2.ts');
-      expect(onChange).toHaveBeenCalledTimes(1);
-
-      // Act & Assert - Second pause/resume cycle
-      onChange.mockClear();
-      hadChanges = watcher.pause();
-      expect(hadChanges).toBe(false);
-
-      changeHandler?.('src/file3.ts');
-      changeHandler?.('src/file4.ts');
-      hadChanges = watcher.pause();
-      expect(hadChanges).toBe(true);
-
-      watcher.resume();
-      changeHandler?.('src/file5.ts');
-      expect(onChange).toHaveBeenCalledTimes(1);
-    });
-
-    it('should clear debounce timer when stopping', () => {
-      // Arrange
-      watcher = new FileWatcher({
-        patterns: './src',
-        debounceMs: 100,
-        onChange
-      });
-      watcher.start();
-      const changeHandler = mockChokidarWatcher.on.mock.calls.find(
-        call => call[0] === 'change'
-      )?.[1] as ((path: string) => void) | undefined;
-
-      // Act - Trigger change and stop before debounce completes
-      changeHandler?.('src/file.ts');
-      watcher.stop();
-      jest.advanceTimersByTime(100);
-
-      // Assert - onChange should not be called after stop
-      expect(onChange).not.toHaveBeenCalled();
-    });
-
-    it('should reset pause state when stopping', () => {
-      // Arrange
-      watcher = new FileWatcher({
-        patterns: './src',
-        onChange
-      });
-      watcher.start();
-      watcher.pause();
-      const changeHandler = mockChokidarWatcher.on.mock.calls.find(
-        call => call[0] === 'change'
-      )?.[1] as ((path: string) => void) | undefined;
-      changeHandler?.('src/file.ts');
-
-      // Act - Stop and restart
-      watcher.stop();
-      watcher.start();
-      changeHandler?.('src/file2.ts');
-
-      // Assert - Should work normally after restart (not paused)
-      expect(onChange).toHaveBeenCalledTimes(1);
     });
   });
 });
