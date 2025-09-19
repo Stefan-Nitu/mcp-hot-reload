@@ -167,7 +167,7 @@ describe('ServerLifecycle', () => {
       // Reset mock to get a new process
       const newProcess = new MockChildProcess();
       newProcess.pid = 5678;
-      (mockProcessManager.start as jest.Mock).mockResolvedValue(newProcess as unknown as ChildProcess);
+      (mockProcessManager.start as jest.MockedFunction<typeof mockProcessManager.start>).mockResolvedValue(newProcess as unknown as ChildProcess);
 
       // Act
       await lifecycle.restart();
@@ -295,7 +295,7 @@ describe('ServerLifecycle', () => {
       // Arrange - Create a process with non-writable stdin
       const processWithoutWritableStdin = new MockChildProcess();
       processWithoutWritableStdin.stdin = Object.assign(new Writable(), { writable: false });
-      (mockProcessManager.start as jest.Mock).mockResolvedValue(processWithoutWritableStdin as unknown as ChildProcess);
+      (mockProcessManager.start as jest.MockedFunction<typeof mockProcessManager.start>).mockResolvedValue(processWithoutWritableStdin as unknown as ChildProcess);
 
       // Act
       const startTime = Date.now();
@@ -314,7 +314,7 @@ describe('ServerLifecycle', () => {
     it('should propagate error when ProcessManager.start() fails', async () => {
       // Arrange
       const startError = new Error('Failed to spawn process');
-      (mockProcessManager.start as jest.Mock).mockRejectedValue(startError);
+      (mockProcessManager.start as jest.MockedFunction<typeof mockProcessManager.start>).mockRejectedValue(startError);
 
       // Act & Assert
       await expect(lifecycle.start()).rejects.toThrow('Failed to spawn process');
@@ -328,7 +328,7 @@ describe('ServerLifecycle', () => {
       // Arrange
       await lifecycle.start();
       const stopError = new Error('Failed to stop process');
-      (mockProcessManager.stop as jest.Mock).mockRejectedValue(stopError);
+      (mockProcessManager.stop as jest.MockedFunction<typeof mockProcessManager.stop>).mockRejectedValue(stopError);
 
       // Act & Assert
       await expect(lifecycle.stop()).rejects.toThrow('Failed to stop process');
@@ -339,7 +339,7 @@ describe('ServerLifecycle', () => {
       await lifecycle.start();
       lifecycle.enableSignalHandling();
       const stopError = new Error('Failed to stop process');
-      (mockProcessManager.stop as jest.Mock).mockRejectedValue(stopError);
+      (mockProcessManager.stop as jest.MockedFunction<typeof mockProcessManager.stop>).mockRejectedValue(stopError);
       const sigintHandler = process.listeners('SIGINT').slice(-1)[0] as () => void;
 
       // Act
@@ -528,7 +528,7 @@ describe('ServerLifecycle', () => {
       // Arrange - Create a process with null stdin
       const processWithNullStdin = new MockChildProcess();
       processWithNullStdin.stdin = null;
-      (mockProcessManager.start as jest.Mock).mockResolvedValue(processWithNullStdin as unknown as ChildProcess);
+      (mockProcessManager.start as jest.MockedFunction<typeof mockProcessManager.start>).mockResolvedValue(processWithNullStdin as unknown as ChildProcess);
 
       // Act
       const startTime = Date.now();
