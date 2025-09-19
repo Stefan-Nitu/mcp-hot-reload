@@ -3,7 +3,7 @@ import { ServerLifecycle } from './server-lifecycle.js';
 import { ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
 import { Writable, Readable } from 'stream';
-import type { ProcessManager } from './process-manager.js';
+import type { ProcessManager, ProcessConfig } from './process-manager.js';
 
 // Create a mock ChildProcess that extends EventEmitter
 class MockChildProcess extends EventEmitter {
@@ -11,33 +11,50 @@ class MockChildProcess extends EventEmitter {
   stdin: Writable | null = Object.assign(new Writable(), { writable: true });
   stdout: Readable | null = new EventEmitter() as Readable;
   stderr: Readable | null = null;
+  stdio: [Writable | null, Readable | null, Readable | null, Readable | Writable | null | undefined, Readable | Writable | null | undefined] =
+    [this.stdin, this.stdout, this.stderr, null, null];
   kill = jest.fn<() => boolean>().mockReturnValue(true);
   killed = false;
+  connected = false;
   exitCode: number | null = null;
   signalCode: NodeJS.Signals | null = null;
+  spawnargs: string[] = [];
+  spawnfile: string = '';
+  send = jest.fn<(message: any, callback?: (error: Error | null) => void) => boolean>().mockReturnValue(false);
+  disconnect = jest.fn<() => void>();
+  unref = jest.fn<() => MockChildProcess>().mockReturnThis();
+  ref = jest.fn<() => MockChildProcess>().mockReturnThis();
+  [Symbol.dispose] = jest.fn<() => void>();
 }
 
 describe('ServerLifecycle', () => {
   let lifecycle: ServerLifecycle;
   let mockProcessManager: ProcessManager;
   let mockProcess: MockChildProcess;
-  let onServerReady: jest.Mock<(process: ChildProcess) => void>;
-  let onServerExit: jest.Mock<(code: number | null, signal: NodeJS.Signals | null) => void>;
-  let onShutdown: jest.Mock<(exitCode: number) => void>;
+
+  let onServerReady: jest.Mock;
+  let onServerExit: jest.Mock;
+  let onShutdown: jest.Mock;
 
   beforeEach(() => {
     // Create mock process
     mockProcess = new MockChildProcess();
 
+    const startMock = jest.fn<(config: ProcessConfig) => Promise<ChildProcess>>();
+    startMock.mockResolvedValue(mockProcess as unknown as ChildProcess);
+
+    const stopMock = jest.fn<(timeout?: number) => Promise<void>>();
+    stopMock.mockResolvedValue(undefined);
+
     mockProcessManager = {
-      start: jest.fn<ProcessManager['start']>().mockResolvedValue(mockProcess as any),
-      stop: jest.fn<ProcessManager['stop']>().mockResolvedValue(undefined),
+      start: startMock,
+      stop: stopMock,
       process: null
     } as unknown as ProcessManager;
 
-    onServerReady = jest.fn<(process: ChildProcess) => void>();
-    onServerExit = jest.fn<(code: number | null, signal: NodeJS.Signals | null) => void>();
-    onShutdown = jest.fn<(exitCode: number) => void>();
+    onServerReady = jest.fn();
+    onServerExit = jest.fn();
+    onShutdown = jest.fn();
 
     lifecycle = new ServerLifecycle(
       mockProcessManager,
@@ -86,9 +103,9 @@ describe('ServerLifecycle', () => {
 
     it('should handle server exit during start', async () => {
       // Arrange
-      mockProcessManager.start.mockImplementation(async () => {
+      (mockProcessManager.start as jest.Mock).mockImplementation(async () => {
         setTimeout(() => mockProcess.emit('exit', 1, null), 10);
-        return mockProcess;
+        return mockProcess as unknown as ChildProcess;
       });
 
       // Act & Assert
@@ -150,7 +167,7 @@ describe('ServerLifecycle', () => {
       // Reset mock to get a new process
       const newProcess = new MockChildProcess();
       newProcess.pid = 5678;
-      (mockProcessManager.start as jest.Mock).mockResolvedValue(newProcess);
+      (mockProcessManager.start as jest.Mock).mockResolvedValue(newProcess as unknown as ChildProcess);
 
       // Act
       await lifecycle.restart();
@@ -278,7 +295,7 @@ describe('ServerLifecycle', () => {
       // Arrange - Create a process with non-writable stdin
       const processWithoutWritableStdin = new MockChildProcess();
       processWithoutWritableStdin.stdin = Object.assign(new Writable(), { writable: false });
-      (mockProcessManager.start as jest.Mock).mockResolvedValue(processWithoutWritableStdin);
+      (mockProcessManager.start as jest.Mock).mockResolvedValue(processWithoutWritableStdin as unknown as ChildProcess);
 
       // Act
       const startTime = Date.now();
@@ -433,7 +450,7 @@ describe('ServerLifecycle', () => {
       const quickExitProcess = new MockChildProcess();
       quickExitProcess.stdin = Object.assign(new Writable(), { writable: true });
 
-      mockProcessManager.start = jest.fn<ProcessManager['start']>().mockImplementation(async () => {
+      (mockProcessManager.start as jest.Mock) = jest.fn().mockImplementation(async () => {
         setTimeout(() => {
           quickExitProcess.emit('exit', 1, null);
         }, 30);
@@ -450,7 +467,7 @@ describe('ServerLifecycle', () => {
       const quickExitProcess = new MockChildProcess();
       quickExitProcess.stdin = Object.assign(new Writable(), { writable: true });
 
-      mockProcessManager.start = jest.fn<ProcessManager['start']>().mockImplementation(async () => {
+      (mockProcessManager.start as jest.Mock) = jest.fn().mockImplementation(async () => {
         // Simulate process that exits just after first check finds stdin writable
         setTimeout(() => {
           quickExitProcess.emit('exit', 1, null);
@@ -470,7 +487,7 @@ describe('ServerLifecycle', () => {
       const slowExitProcess = new MockChildProcess();
       slowExitProcess.stdin = Object.assign(new Writable(), { writable: false });
 
-      mockProcessManager.start.mockImplementation(async () => {
+      (mockProcessManager.start as jest.Mock).mockImplementation(async () => {
         // Simulate process exiting just before the 2-second timeout
         setTimeout(() => {
           slowExitProcess.emit('exit', 1, null);
@@ -490,7 +507,7 @@ describe('ServerLifecycle', () => {
       const timedExitProcess = new MockChildProcess();
       timedExitProcess.stdin = Object.assign(new Writable(), { writable: false });
 
-      mockProcessManager.start.mockImplementation(async () => {
+      (mockProcessManager.start as jest.Mock).mockImplementation(async () => {
         // Simulate process exiting right at the 2-second mark
         setTimeout(() => {
           timedExitProcess.emit('exit', 1, null);
@@ -511,7 +528,7 @@ describe('ServerLifecycle', () => {
       // Arrange - Create a process with null stdin
       const processWithNullStdin = new MockChildProcess();
       processWithNullStdin.stdin = null;
-      (mockProcessManager.start as jest.Mock).mockResolvedValue(processWithNullStdin);
+      (mockProcessManager.start as jest.Mock).mockResolvedValue(processWithNullStdin as unknown as ChildProcess);
 
       // Act
       const startTime = Date.now();
@@ -528,7 +545,7 @@ describe('ServerLifecycle', () => {
       // Arrange
       const processWithNullStdin = new MockChildProcess();
       processWithNullStdin.stdin = null;
-      mockProcessManager.start.mockImplementation(async () => {
+      (mockProcessManager.start as jest.Mock).mockImplementation(async () => {
         setTimeout(() => processWithNullStdin.emit('exit', 1, null), 100);
         return processWithNullStdin;
       });
