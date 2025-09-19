@@ -298,9 +298,13 @@ Complete setup for a TypeScript MCP server:
 {
   "mcpServers": {
     "my-typescript-server": {
-      "command": "npx",
-      "args": ["mcp-hot-reload"],
-      "cwd": "/Users/me/projects/my-mcp-server"
+      "command": "mcp-hot-reload",
+      "args": [
+        "node",
+        "/Users/me/projects/my-mcp-server/dist/index.js",
+        "--watch",
+        "src/**/*.ts"
+      ]
     }
   }
 }
