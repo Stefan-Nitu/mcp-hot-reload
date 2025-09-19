@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { MCPHotReload } from './mcp-hot-reload.js';
+import { MCPProxy } from './mcp-proxy.js';
 import { ProxyConfig } from './types.js';
 import { existsSync, readFileSync } from 'fs';
 import * as path from 'path';
@@ -46,7 +46,7 @@ if (args.length > 0) {
   }
 }
 
-const proxy = new MCPHotReload(config);
+const proxy = new MCPProxy(config);
 proxy.start().catch(error => {
   log.error({ err: error }, 'Failed to start proxy');
   process.exit(1);

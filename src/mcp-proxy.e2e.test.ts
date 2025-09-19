@@ -1,14 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { MCPHotReload } from './mcp-hot-reload.js';
-import { spawn, ChildProcess } from 'child_process';
+import { MCPProxy } from './mcp-proxy.js';
 import { PassThrough } from 'stream';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 
-describe('MCPHotReload Real E2E Tests', () => {
+describe('MCPProxy E2E Tests', () => {
   let testDir: string;
-  let proxy: MCPHotReload | null = null;
+  let proxy: MCPProxy | null = null;
   let proxyStdin: PassThrough;
   let proxyStdout: PassThrough;
   let proxyStderr: PassThrough;
@@ -57,7 +56,7 @@ describe('MCPHotReload Real E2E Tests', () => {
 
       // Act - Start real proxy with REAL MCP SDK server
       // Run from project root so it can access node_modules
-      proxy = new MCPHotReload(
+      proxy = new MCPProxy(
         {
           buildCommand: 'echo "Building"',
           serverCommand: 'node',
@@ -168,7 +167,7 @@ describe('MCPHotReload Real E2E Tests', () => {
 
     it('should handle real file changes and server restart', async () => {
       // Arrange - Use the versioned test server fixture as template
-      const fixtureServerPath = path.join(__dirname, '..', 'test-fixtures', 'versioned-test-server.js');
+      const fixtureServerPath = path.join(__dirname, '..', 'test/fixtures/servers', 'versioned-test-server.js');
       const fixtureContent = fs.readFileSync(fixtureServerPath, 'utf-8');
       const serverPath = path.join(testDir, 'server.mjs');
 
@@ -190,7 +189,7 @@ describe('MCPHotReload Real E2E Tests', () => {
       );
 
       // Act - Start proxy
-      proxy = new MCPHotReload(
+      proxy = new MCPProxy(
         {
           buildCommand: 'echo "Building"',
           serverCommand: 'node',
@@ -300,7 +299,7 @@ process.stdin.on('data', (chunk) => {
       fs.writeFileSync(path.join(testDir, 'server.mjs'), serverCode);
 
       // Act - Start proxy
-      proxy = new MCPHotReload(
+      proxy = new MCPProxy(
         {
           serverCommand: 'node',
           serverArgs: ['server.mjs'],
@@ -326,10 +325,10 @@ process.stdin.on('data', (chunk) => {
       await new Promise(resolve => setTimeout(resolve, 1000));
 
       // Assert - Check behavior, not logs
-      // After crash, serverProcess should be null
+      // After crash, server should not be running
       await new Promise(resolve => setTimeout(resolve, 500));
-      const serverProcess = (proxy as any).serverProcess;
-      expect(serverProcess).toBeNull();
+      const isRunning = (proxy as any).serverLifecycle.isRunning();
+      expect(isRunning).toBe(false);
     }, 10000);
   });
 
@@ -387,7 +386,7 @@ process.stdin.on('data', (chunk) => {
       fs.writeFileSync(path.join(testDir, 'server.js'), serverCode);
 
       // Act - Start proxy with real build command
-      proxy = new MCPHotReload(
+      proxy = new MCPProxy(
         {
           buildCommand: './build.sh',
           serverCommand: 'node',
@@ -440,7 +439,7 @@ exit 1
         'process.stdin.resume();');
 
       // Act
-      proxy = new MCPHotReload(
+      proxy = new MCPProxy(
         {
           buildCommand: './build.sh',
           serverCommand: 'node',
@@ -471,8 +470,7 @@ exit 1
       expect(fs.existsSync(path.join(testDir, 'dist'))).toBe(false);
 
       // Server should still be running despite build failure
-      expect((proxy as any).serverProcess).toBeDefined();
-      expect((proxy as any).isRestarting).toBe(false);
+      expect((proxy as any).serverLifecycle.isRunning()).toBe(true);
     }, 10000);
   });
 });

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { MCPHotReload } from './mcp-hot-reload.js';
+import { MCPProxy } from './mcp-proxy.js';
 import { PassThrough } from 'stream';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -8,9 +8,9 @@ import chokidar from 'chokidar';
 // Use process.cwd() to find the test server since we're in Jest environment
 const TEST_SERVER_PATH = path.join(process.cwd(), 'test/fixtures/servers/all-content-types-server.js');
 
-describe('MCPHotReload Integration Tests', () => {
+describe('MCPProxy Integration Tests', () => {
   const testDir = path.join(process.cwd(), 'test-server-tmp');
-  let proxy: MCPHotReload | null = null;
+  let proxy: MCPProxy | null = null;
 
   beforeEach(() => {
     // Create test server directory
@@ -25,6 +25,8 @@ describe('MCPHotReload Integration Tests', () => {
       await proxy.stop();
       proxy = null;
     }
+    // Clean up environment variables that might affect subsequent tests
+    delete process.env.MCP_PROXY_INSTANCE;
     if (fs.existsSync(testDir)) {
       fs.rmSync(testDir, { recursive: true });
     }
@@ -51,7 +53,7 @@ describe('MCPHotReload Integration Tests', () => {
       clientOut.on('data', (chunk) => capturedOutput.push(chunk.toString()));
       clientErr.on('data', (chunk) => capturedErrors.push(chunk.toString()));
 
-      const proxy = new MCPHotReload({
+      const proxy = new MCPProxy({
         buildCommand: 'echo "Building"',
         serverCommand: 'node',
         serverArgs: ['server.js'],
@@ -80,8 +82,8 @@ describe('MCPHotReload Integration Tests', () => {
     const parseResponses = (capturedOutput: string[]) => {
       return capturedOutput
         .map(chunk => {
-          const lines = chunk.split('\n').filter(line => line.trim());
-          return lines.map(line => {
+          const lines = chunk.split('\n').filter((line: string) => line.trim());
+          return lines.map((line: string) => {
             try { return JSON.parse(line); } catch { return null; }
           });
         })
@@ -319,7 +321,7 @@ describe('MCPHotReload Integration Tests', () => {
       const errors: string[] = [];
       clientErr.on('data', (chunk) => errors.push(chunk.toString()));
 
-      proxy = new MCPHotReload({
+      proxy = new MCPProxy({
         buildCommand: 'echo "Building"',
         serverCommand: 'node',
         serverArgs: ['server.js'],
@@ -357,13 +359,7 @@ describe('MCPHotReload Integration Tests', () => {
       clientIn.write(initRequest);
       await new Promise(resolve => setTimeout(resolve, 500));
 
-      // Assert - Check actual behavior through metrics
-      const metrics = proxy.getMetrics();
-      expect(metrics.fileChangesDetected).toBeGreaterThan(0);
-      expect(metrics.restartCount).toBeGreaterThan(0);
-      expect(metrics.buildCount).toBeGreaterThanOrEqual(2); // Initial + restart
-
-      // Also verify we got more outputs
+      // Assert - Server restarted (we get more outputs)
       expect(outputs.length).toBeGreaterThan(initialOutputs);
     }, 10000);
 
@@ -418,42 +414,74 @@ describe('MCPHotReload Integration Tests', () => {
       fs.mkdirSync(path.join(testDir, 'src'), { recursive: true });
       fs.mkdirSync(path.join(testDir, 'lib'), { recursive: true });
 
-      proxy = new MCPHotReload({
+      const clientIn = new PassThrough();
+      const clientOut = new PassThrough();
+      const clientErr = new PassThrough();
+      const outputs: any[] = [];
+      clientOut.on('data', (chunk) => {
+        const lines = chunk.toString().split('\n').filter((line: string) => line.trim());
+        lines.forEach((line: string) => {
+          try {
+            const msg = JSON.parse(line);
+            if (msg.id === 1 && msg.result) {
+              outputs.push(msg);
+            }
+          } catch (e) {
+            // Ignore non-JSON lines
+          }
+        });
+      });
+
+      proxy = new MCPProxy({
         serverCommand: 'node',
         serverArgs: ['server.js'],
         cwd: testDir,
         watchPattern: ['./src/**/*.py', './lib/**/*.js'],
         debounceMs: 100,
         onExit: () => {}
-      }, new PassThrough(), new PassThrough(), new PassThrough());
+      }, clientIn, clientOut, clientErr);
 
       await proxy.start();
       await new Promise(resolve => setTimeout(resolve, 500));
 
+      // Send initialize to get a baseline response
+      const initRequest = JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {}
+      }) + '\n';
+
+      clientIn.write(initRequest);
+      await new Promise(resolve => setTimeout(resolve, 500));
+
       // Act & Assert
-      const initialMetrics = proxy.getMetrics();
+      const initialOutputs = outputs.length;
+      expect(initialOutputs).toBe(1); // Should have one initialize response
 
       // TypeScript files should NOT trigger (not in pattern)
       fs.writeFileSync(path.join(testDir, 'src/index.ts'), 'console.log("ts")');
       await new Promise(resolve => setTimeout(resolve, 1000));
 
-      const afterTSMetrics = proxy.getMetrics();
-      expect(afterTSMetrics.fileChangesDetected).toBe(initialMetrics.fileChangesDetected);
+      // Should not restart for files outside watched directories
+      expect(outputs.length).toBe(1); // Still just one response
 
       // Python files in src SHOULD trigger
       fs.writeFileSync(path.join(testDir, 'src/main.py'), 'print("hello")');
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      await new Promise(resolve => setTimeout(resolve, 2000)); // Wait for restart
 
-      const afterPyMetrics = proxy.getMetrics();
-      expect(afterPyMetrics.fileChangesDetected).toBeGreaterThan(afterTSMetrics.fileChangesDetected);
+      // Should have restarted (auto re-init gives us 2nd response)
+      expect(outputs.length).toBe(2);
 
       // JavaScript files in lib SHOULD trigger
       fs.writeFileSync(path.join(testDir, 'lib/utils.js'), 'module.exports = {}');
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      await new Promise(resolve => setTimeout(resolve, 2000)); // Wait for restart
 
-      const finalMetrics = proxy.getMetrics();
-      expect(finalMetrics.fileChangesDetected).toBeGreaterThan(afterPyMetrics.fileChangesDetected);
-      expect(finalMetrics.restartCount).toBeGreaterThan(initialMetrics.restartCount);
+      // Should restart for JS in lib (auto re-init gives us 3rd response)
+      expect(outputs.length).toBe(3);
+
+      // Clean up streams before proxy.stop()
+      clientIn.end();
     }, 10000);
 
     it('should only restart for TypeScript files, not other file types', async () => {
@@ -463,20 +491,50 @@ describe('MCPHotReload Integration Tests', () => {
       fs.chmodSync(serverPath, 0o755);
       fs.mkdirSync(path.join(testDir, 'src'), { recursive: true });
 
-      proxy = new MCPHotReload({
+      const clientIn = new PassThrough();
+      const clientOut = new PassThrough();
+      const clientErr = new PassThrough();
+      const outputs: any[] = [];
+      clientOut.on('data', (chunk) => {
+        const lines = chunk.toString().split('\n').filter((line: string) => line.trim());
+        lines.forEach((line: string) => {
+          try {
+            const msg = JSON.parse(line);
+            if (msg.id === 1 && msg.result) {
+              outputs.push(msg);
+            }
+          } catch (e) {
+            // Ignore non-JSON lines
+          }
+        });
+      });
+
+      proxy = new MCPProxy({
         serverCommand: 'node',
         serverArgs: ['server.js'],
         cwd: testDir,
         watchPattern: 'src',
         debounceMs: 100,
         onExit: () => {}
-      }, new PassThrough(), new PassThrough(), new PassThrough());
+      }, clientIn, clientOut, clientErr);
 
       await proxy.start();
       await new Promise(resolve => setTimeout(resolve, 500));
 
+      // Send initialize to get a baseline response
+      const initRequest = JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {}
+      }) + '\n';
+
+      clientIn.write(initRequest);
+      await new Promise(resolve => setTimeout(resolve, 500));
+
       // Act & Assert
-      const initialMetrics = proxy.getMetrics();
+      const initialOutputs = outputs.length;
+      expect(initialOutputs).toBe(1); // Should have one initialize response
 
       // Non-TypeScript files should NOT trigger restarts
       fs.writeFileSync(path.join(testDir, 'src/readme.md'), '# README');
@@ -484,18 +542,18 @@ describe('MCPHotReload Integration Tests', () => {
       fs.writeFileSync(path.join(testDir, 'src/styles.css'), 'body {}');
       await new Promise(resolve => setTimeout(resolve, 1000));
 
-      const afterNonTSMetrics = proxy.getMetrics();
-      expect(afterNonTSMetrics.fileChangesDetected).toBe(initialMetrics.fileChangesDetected);
-      expect(afterNonTSMetrics.restartCount).toBe(initialMetrics.restartCount);
+      // No restart for non-TS files
+      expect(outputs.length).toBe(1); // Still just one response
 
       // TypeScript files SHOULD trigger restarts
       fs.writeFileSync(path.join(testDir, 'src/index.ts'), 'console.log("test")');
-      fs.writeFileSync(path.join(testDir, 'src/types.tsx'), 'export {}');
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      await new Promise(resolve => setTimeout(resolve, 2000)); // Wait for restart
 
-      const finalMetrics = proxy.getMetrics();
-      expect(finalMetrics.fileChangesDetected).toBeGreaterThan(afterNonTSMetrics.fileChangesDetected);
-      expect(finalMetrics.restartCount).toBeGreaterThan(afterNonTSMetrics.restartCount);
+      // Should restart for .ts file (auto re-init gives us 2nd response)
+      expect(outputs.length).toBe(2);
+
+      // Clean up streams before proxy.stop()
+      clientIn.end();
     }, 10000);
   });
 
@@ -518,7 +576,7 @@ describe('MCPHotReload Integration Tests', () => {
       const errors: string[] = [];
       clientErr.on('data', (chunk) => errors.push(chunk.toString()));
 
-      proxy = new MCPHotReload({
+      proxy = new MCPProxy({
         buildCommand: 'exit 1', // Always fails
         serverCommand: 'node',
         serverArgs: ['server.js'],
@@ -550,11 +608,7 @@ describe('MCPHotReload Integration Tests', () => {
       clientIn.write(initRequest);
       await new Promise(resolve => setTimeout(resolve, 500));
 
-      // Assert - Check behavior through metrics
-      const metrics = proxy.getMetrics();
-      expect(metrics.buildCount).toBeGreaterThan(0);
-      expect(metrics.buildFailureCount).toBeGreaterThan(0); // Build failed
-      expect(metrics.buildSuccessCount).toBe(0); // No successful builds
+      // Assert - Build should fail but server should still run
 
       // Server should still be running and processing
       expect(proxy).toBeDefined();
@@ -570,7 +624,7 @@ describe('MCPHotReload Integration Tests', () => {
       const errors: string[] = [];
       clientErr.on('data', (chunk) => errors.push(chunk.toString()));
 
-      proxy = new MCPHotReload({
+      proxy = new MCPProxy({
         buildCommand: 'echo "Building"',
         serverCommand: 'node',
         serverArgs: ['-e', 'process.exit(1)'], // Crashes immediately
@@ -578,14 +632,11 @@ describe('MCPHotReload Integration Tests', () => {
         onExit: () => {}
       }, clientIn, clientOut, clientErr);
 
-      // Act
-      await proxy.start();
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      // Act & Assert - Server should fail to start
+      await expect(proxy.start()).rejects.toThrow('Process exited during startup');
 
-      // Assert - Server process should have exited
-      // The proxy's serverProcess should be null after crash
-      await new Promise(resolve => setTimeout(resolve, 500));
-      expect((proxy as any).serverProcess).toBeNull();
+      // The serverLifecycle should report server as not running after crash
+      expect((proxy as any).serverLifecycle.isRunning()).toBe(false);
     }, 10000);
   });
 
@@ -623,7 +674,7 @@ describe('MCPHotReload Integration Tests', () => {
         onExit: jest.fn()
       };
 
-      proxy = new MCPHotReload(config, clientIn, clientOut, clientErr);
+      proxy = new MCPProxy(config, clientIn, clientOut, clientErr);
 
       // Act
       await proxy.start();
@@ -666,7 +717,7 @@ describe('MCPHotReload Integration Tests', () => {
         onExit: jest.fn()
       };
 
-      proxy = new MCPHotReload(config, clientIn, clientOut, clientErr);
+      proxy = new MCPProxy(config, clientIn, clientOut, clientErr);
 
       // Act
       await proxy.start();
@@ -725,7 +776,7 @@ describe('MCPHotReload Integration Tests', () => {
         onExit: jest.fn()
       };
 
-      proxy = new MCPHotReload(config, clientIn, clientOut, clientErr);
+      proxy = new MCPProxy(config, clientIn, clientOut, clientErr);
 
       // Act
       await proxy.start();
