@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, jest } from '@jest/globals';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { ServerLifecycle } from './server-lifecycle.js';
 import { ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
@@ -6,25 +6,25 @@ import { Writable, Readable } from 'stream';
 import type { ProcessManager, ProcessConfig } from './process-manager.js';
 
 // Create a mock ChildProcess that extends EventEmitter
-class MockChildProcess extends EventEmitter {
+class MockChildProcess extends EventEmitter implements ChildProcess {
   pid: number = 1234;
   stdin: Writable | null = Object.assign(new Writable(), { writable: true });
   stdout: Readable | null = new EventEmitter() as Readable;
   stderr: Readable | null = null;
   stdio: [Writable | null, Readable | null, Readable | null, Readable | Writable | null | undefined, Readable | Writable | null | undefined] =
     [this.stdin, this.stdout, this.stderr, null, null];
-  kill = jest.fn<() => boolean>().mockReturnValue(true);
+  kill = vi.fn<(signal?: NodeJS.Signals | number) => boolean>().mockReturnValue(true);
   killed = false;
   connected = false;
   exitCode: number | null = null;
   signalCode: NodeJS.Signals | null = null;
   spawnargs: string[] = [];
   spawnfile: string = '';
-  send = jest.fn<(message: any, callback?: (error: Error | null) => void) => boolean>().mockReturnValue(false);
-  disconnect = jest.fn<() => void>();
-  unref = jest.fn<() => MockChildProcess>().mockReturnThis();
-  ref = jest.fn<() => MockChildProcess>().mockReturnThis();
-  [Symbol.dispose] = jest.fn<() => void>();
+  send = vi.fn<(message: any, callback?: (error: Error | null) => void) => boolean>().mockReturnValue(false);
+  disconnect = vi.fn<() => void>();
+  unref = vi.fn<() => this>().mockReturnThis();
+  ref = vi.fn<() => this>().mockReturnThis();
+  [Symbol.dispose] = vi.fn<() => void>();
 }
 
 describe('ServerLifecycle', () => {
@@ -32,29 +32,29 @@ describe('ServerLifecycle', () => {
   let mockProcessManager: ProcessManager;
   let mockProcess: MockChildProcess;
 
-  let onServerReady: jest.Mock;
-  let onServerExit: jest.Mock;
-  let onShutdown: jest.Mock;
+  let onServerReady: vi.Mock;
+  let onServerExit: vi.Mock;
+  let onShutdown: vi.Mock;
 
   beforeEach(() => {
     // Create mock process
     mockProcess = new MockChildProcess();
 
-    const startMock = jest.fn<(config: ProcessConfig) => Promise<ChildProcess>>();
-    startMock.mockResolvedValue(mockProcess as unknown as ChildProcess);
+    const startMock = vi.fn<(config: ProcessConfig) => Promise<ChildProcess>>();
+    startMock.mockResolvedValue(mockProcess);
 
-    const stopMock = jest.fn<(timeout?: number) => Promise<void>>();
+    const stopMock = vi.fn<(timeout?: number) => Promise<void>>();
     stopMock.mockResolvedValue(undefined);
 
     mockProcessManager = {
       start: startMock,
       stop: stopMock,
       process: null
-    } as unknown as ProcessManager;
+    } as ProcessManager;
 
-    onServerReady = jest.fn();
-    onServerExit = jest.fn();
-    onShutdown = jest.fn();
+    onServerReady = vi.fn();
+    onServerExit = vi.fn();
+    onShutdown = vi.fn();
 
     lifecycle = new ServerLifecycle(
       mockProcessManager,
@@ -103,9 +103,9 @@ describe('ServerLifecycle', () => {
 
     it('should handle server exit during start', async () => {
       // Arrange
-      (mockProcessManager.start as jest.Mock).mockImplementation(async () => {
+      (mockProcessManager.start as vi.Mock).mockImplementation(async () => {
         setTimeout(() => mockProcess.emit('exit', 1, null), 10);
-        return mockProcess as unknown as ChildProcess;
+        return mockProcess;
       });
 
       // Act & Assert
@@ -167,7 +167,7 @@ describe('ServerLifecycle', () => {
       // Reset mock to get a new process
       const newProcess = new MockChildProcess();
       newProcess.pid = 5678;
-      (mockProcessManager.start as jest.MockedFunction<typeof mockProcessManager.start>).mockResolvedValue(newProcess as unknown as ChildProcess);
+      (mockProcessManager.start as vi.MockedFunction<typeof mockProcessManager.start>).mockResolvedValue(newProcess);
 
       // Act
       await lifecycle.restart();
@@ -253,7 +253,7 @@ describe('ServerLifecycle', () => {
 
     it('should handle shutdown timeout', async () => {
       // Arrange
-      (mockProcessManager.stop as jest.Mock).mockImplementation(() =>
+      (mockProcessManager.stop as vi.Mock).mockImplementation(() =>
         new Promise(resolve => setTimeout(resolve, 6000))
       );
       await lifecycle.start();
@@ -311,7 +311,7 @@ describe('ServerLifecycle', () => {
       // Arrange - Create a process with non-writable stdin
       const processWithoutWritableStdin = new MockChildProcess();
       processWithoutWritableStdin.stdin = Object.assign(new Writable(), { writable: false });
-      (mockProcessManager.start as jest.MockedFunction<typeof mockProcessManager.start>).mockResolvedValue(processWithoutWritableStdin as unknown as ChildProcess);
+      (mockProcessManager.start as vi.MockedFunction<typeof mockProcessManager.start>).mockResolvedValue(processWithoutWritableStdin);
 
       // Act
       const startTime = Date.now();
@@ -330,7 +330,7 @@ describe('ServerLifecycle', () => {
     it('should propagate error when ProcessManager.start() fails', async () => {
       // Arrange
       const startError = new Error('Failed to spawn process');
-      (mockProcessManager.start as jest.MockedFunction<typeof mockProcessManager.start>).mockRejectedValue(startError);
+      (mockProcessManager.start as vi.MockedFunction<typeof mockProcessManager.start>).mockRejectedValue(startError);
 
       // Act & Assert
       await expect(lifecycle.start()).rejects.toThrow('Failed to spawn process');
@@ -344,7 +344,7 @@ describe('ServerLifecycle', () => {
       // Arrange
       await lifecycle.start();
       const stopError = new Error('Failed to stop process');
-      (mockProcessManager.stop as jest.MockedFunction<typeof mockProcessManager.stop>).mockRejectedValue(stopError);
+      (mockProcessManager.stop as vi.MockedFunction<typeof mockProcessManager.stop>).mockRejectedValue(stopError);
 
       // Act & Assert
       await expect(lifecycle.stop()).rejects.toThrow('Failed to stop process');
@@ -355,7 +355,7 @@ describe('ServerLifecycle', () => {
       await lifecycle.start();
       lifecycle.enableSignalHandling();
       const stopError = new Error('Failed to stop process');
-      (mockProcessManager.stop as jest.MockedFunction<typeof mockProcessManager.stop>).mockRejectedValue(stopError);
+      (mockProcessManager.stop as vi.MockedFunction<typeof mockProcessManager.stop>).mockRejectedValue(stopError);
       const sigintHandler = process.listeners('SIGINT').slice(-1)[0] as () => void;
 
       // Act
@@ -466,11 +466,11 @@ describe('ServerLifecycle', () => {
       const quickExitProcess = new MockChildProcess();
       quickExitProcess.stdin = Object.assign(new Writable(), { writable: true });
 
-      (mockProcessManager.start as jest.Mock) = jest.fn().mockImplementation(async () => {
+      (mockProcessManager.start as vi.Mock) = vi.fn().mockImplementation(async () => {
         setTimeout(() => {
           quickExitProcess.emit('exit', 1, null);
         }, 30);
-        return quickExitProcess as unknown as ChildProcess;
+        return quickExitProcess;
       });
 
       // Act & Assert
@@ -483,12 +483,12 @@ describe('ServerLifecycle', () => {
       const quickExitProcess = new MockChildProcess();
       quickExitProcess.stdin = Object.assign(new Writable(), { writable: true });
 
-      (mockProcessManager.start as jest.Mock) = jest.fn().mockImplementation(async () => {
+      (mockProcessManager.start as vi.Mock) = vi.fn().mockImplementation(async () => {
         // Simulate process that exits just after first check finds stdin writable
         setTimeout(() => {
           quickExitProcess.emit('exit', 1, null);
         }, 55); // Just after first check interval at 50ms
-        return quickExitProcess as unknown as ChildProcess;
+        return quickExitProcess;
       });
 
       // Act & Assert
@@ -503,14 +503,14 @@ describe('ServerLifecycle', () => {
       const slowExitProcess = new MockChildProcess();
       slowExitProcess.stdin = Object.assign(new Writable(), { writable: false });
 
-      (mockProcessManager.start as jest.Mock).mockImplementation(async () => {
+      (mockProcessManager.start as vi.Mock).mockImplementation(async () => {
         // Simulate process exiting just before the 2-second timeout
         setTimeout(() => {
           slowExitProcess.emit('exit', 1, null);
           // Clear the process reference as the real exit handler would
           (lifecycle as any).process = null;
         }, 1900);
-        return slowExitProcess as unknown as ChildProcess;
+        return slowExitProcess;
       });
 
       // Act & Assert
@@ -523,14 +523,14 @@ describe('ServerLifecycle', () => {
       const timedExitProcess = new MockChildProcess();
       timedExitProcess.stdin = Object.assign(new Writable(), { writable: false });
 
-      (mockProcessManager.start as jest.Mock).mockImplementation(async () => {
+      (mockProcessManager.start as vi.Mock).mockImplementation(async () => {
         // Simulate process exiting right at the 2-second mark
         setTimeout(() => {
           timedExitProcess.emit('exit', 1, null);
           // Clear the process reference as the real exit handler would
           (lifecycle as any).process = null;
         }, 2000);
-        return timedExitProcess as unknown as ChildProcess;
+        return timedExitProcess;
       });
 
       // Act & Assert - Should reject, not resolve
@@ -544,7 +544,7 @@ describe('ServerLifecycle', () => {
       // Arrange - Create a process with null stdin
       const processWithNullStdin = new MockChildProcess();
       processWithNullStdin.stdin = null;
-      (mockProcessManager.start as jest.MockedFunction<typeof mockProcessManager.start>).mockResolvedValue(processWithNullStdin as unknown as ChildProcess);
+      (mockProcessManager.start as vi.MockedFunction<typeof mockProcessManager.start>).mockResolvedValue(processWithNullStdin);
 
       // Act
       const startTime = Date.now();
@@ -561,7 +561,7 @@ describe('ServerLifecycle', () => {
       // Arrange
       const processWithNullStdin = new MockChildProcess();
       processWithNullStdin.stdin = null;
-      (mockProcessManager.start as jest.Mock).mockImplementation(async () => {
+      (mockProcessManager.start as vi.Mock).mockImplementation(async () => {
         setTimeout(() => processWithNullStdin.emit('exit', 1, null), 100);
         return processWithNullStdin;
       });

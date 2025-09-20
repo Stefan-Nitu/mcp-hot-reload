@@ -1,39 +1,48 @@
-import { describe, it, expect, beforeEach, jest } from '@jest/globals';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { HotReload } from './hot-reload.js';
 import { BuildRunner } from './build-runner.js';
 import { FileWatcher } from './file-watcher.js';
 
-jest.mock('./build-runner.js');
-jest.mock('./file-watcher.js');
+// Use vi.hoisted to define mocks that need to be available in vi.mock
+const { mockBuildRunner, mockFileWatcher } = vi.hoisted(() => {
+  const mockBuildRunner = {
+    run: vi.fn<[], Promise<boolean>>(),
+    cancel: vi.fn()
+  };
+
+  const mockFileWatcher = {
+    start: vi.fn(),
+    stop: vi.fn()
+  };
+
+  return { mockBuildRunner, mockFileWatcher };
+});
+
+vi.mock('./build-runner.js', () => ({
+  BuildRunner: vi.fn(() => mockBuildRunner)
+}));
+
+vi.mock('./file-watcher.js', () => ({
+  FileWatcher: vi.fn(() => mockFileWatcher)
+}));
 
 describe('HotReload', () => {
   let hotReload: HotReload;
-  let mockBuildRunner: jest.Mocked<BuildRunner>;
-  let mockFileWatcher: jest.Mocked<FileWatcher>;
-  let mockOnRestart: jest.Mock<() => Promise<void>>;
+  let mockOnRestart: ReturnType<typeof vi.fn<[], Promise<void>>>;
 
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
+    // Reset mock implementations to default behavior
+    mockBuildRunner.run.mockResolvedValue(false);
+    mockBuildRunner.cancel.mockReturnValue(undefined);
+    mockFileWatcher.start.mockReturnValue(undefined);
+    mockFileWatcher.stop.mockReturnValue(undefined);
 
-    mockBuildRunner = {
-      run: jest.fn<() => Promise<boolean>>(),
-      cancel: jest.fn<() => void>()
-    } as unknown as jest.Mocked<BuildRunner>;
-
-    mockFileWatcher = {
-      start: jest.fn<() => void>(),
-      stop: jest.fn<() => void>()
-    } as unknown as jest.Mocked<FileWatcher>;
-
-    mockOnRestart = jest.fn<() => Promise<void>>().mockResolvedValue(undefined);
-
-    // Mock the constructors
-    (BuildRunner as jest.Mock).mockImplementation(() => mockBuildRunner);
-    (FileWatcher as jest.Mock).mockImplementation(() => mockFileWatcher);
+    mockOnRestart = vi.fn<[], Promise<void>>().mockResolvedValue(undefined);
 
     hotReload = new HotReload(
-      mockBuildRunner,
-      mockFileWatcher,
+      new BuildRunner('', ''),
+      new FileWatcher({ patterns: '', onChange: vi.fn() }),
       mockOnRestart
     );
   });

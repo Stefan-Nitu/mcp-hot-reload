@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { MCPProxy } from './mcp-proxy.js';
 import { PassThrough } from 'stream';
 import * as fs from 'fs';

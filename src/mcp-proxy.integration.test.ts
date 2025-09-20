@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { MCPProxy } from './mcp-proxy.js';
 import { PassThrough } from 'stream';
 import * as fs from 'fs';
@@ -671,7 +671,7 @@ describe('MCPProxy Integration Tests', () => {
         buildCommand: 'echo "No build needed"',
         watchPattern: [],
         cwd: testDir,
-        onExit: jest.fn()
+        onExit: vi.fn()
       };
 
       proxy = new MCPProxy(config, clientIn, clientOut, clientErr);
@@ -714,7 +714,7 @@ describe('MCPProxy Integration Tests', () => {
         buildCommand: 'echo "No build needed"',
         watchPattern: [],
         cwd: testDir,
-        onExit: jest.fn()
+        onExit: vi.fn()
       };
 
       proxy = new MCPProxy(config, clientIn, clientOut, clientErr);
@@ -773,7 +773,7 @@ describe('MCPProxy Integration Tests', () => {
         buildCommand: 'echo "No build needed"',
         watchPattern: [],
         cwd: testDir,
-        onExit: jest.fn()
+        onExit: vi.fn()
       };
 
       proxy = new MCPProxy(config, clientIn, clientOut, clientErr);

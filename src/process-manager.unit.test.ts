@@ -1,30 +1,37 @@
-import { describe, it, expect, beforeEach, jest } from '@jest/globals';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { ProcessManager } from './process-manager.js';
-import { PassThrough } from 'stream';
+import { PassThrough, Readable, Writable } from 'stream';
 import { spawn } from 'child_process';
+import type { ChildProcess } from 'child_process';
 
-jest.mock('child_process');
+vi.mock('child_process');
+
+// Helper to create a mock ChildProcess
+function createMockProcess(overrides: Partial<ChildProcess> = {}): ChildProcess {
+  const defaults: Partial<ChildProcess> = {
+    stdin: new PassThrough() as Writable,
+    stdout: new PassThrough() as Readable,
+    stderr: null,
+    pid: 123,
+    kill: vi.fn().mockReturnValue(true),
+    once: vi.fn(),
+    removeAllListeners: vi.fn()
+  };
+  return { ...defaults, ...overrides } as ChildProcess;
+}
 
 describe('ProcessManager', () => {
   let processManager: ProcessManager;
 
   beforeEach(() => {
     processManager = new ProcessManager();
-    jest.clearAllMocks();
+    vi.clearAllMocks();
   });
 
   it('starts a process and returns it with accessible streams', async () => {
     // Arrange
-    const mockProcess = {
-      stdin: new PassThrough(),
-      stdout: new PassThrough(),
-      stderr: null, // Using 'inherit' for stderr
-      pid: 123,
-      kill: jest.fn(),
-      once: jest.fn(),
-      removeAllListeners: jest.fn()
-    };
-    (spawn as jest.Mock).mockReturnValue(mockProcess);
+    const mockProcess = createMockProcess();
+    vi.mocked(spawn).mockReturnValue(mockProcess);
 
     // Act
     const process = await processManager.start({
@@ -46,7 +53,7 @@ describe('ProcessManager', () => {
     const mockProcess = {
       pid: 123
     };
-    (spawn as jest.Mock).mockReturnValue(mockProcess);
+    vi.mocked(spawn).mockReturnValue(mockProcess);
 
     // Act & Assert
     await expect(processManager.start({
@@ -62,15 +69,15 @@ describe('ProcessManager', () => {
       stdout: new PassThrough(),
       stderr: null, // Using 'inherit' for stderr
       pid: 123,
-      kill: jest.fn<() => boolean>().mockReturnValue(true),
-      once: jest.fn((event: string, callback: () => void) => {
+      kill: vi.fn<() => boolean>().mockReturnValue(true),
+      once: vi.fn((event: string, callback: () => void) => {
         if (event === 'exit') {
           setTimeout(callback, 10);
         }
       }),
-      removeAllListeners: jest.fn()
+      removeAllListeners: vi.fn()
     };
-    (spawn as jest.Mock).mockReturnValue(mockProcess);
+    vi.mocked(spawn).mockReturnValue(mockProcess);
     await processManager.start({ command: 'node', args: ['test.js'] });
 
     // Act
@@ -88,11 +95,11 @@ describe('ProcessManager', () => {
       stdout: new PassThrough(),
       stderr: null, // Using 'inherit' for stderr
       pid: 123,
-      kill: jest.fn<() => boolean>().mockReturnValue(true),
-      once: jest.fn(), // Don't trigger exit event
-      removeAllListeners: jest.fn()
+      kill: vi.fn<() => boolean>().mockReturnValue(true),
+      once: vi.fn(), // Don't trigger exit event
+      removeAllListeners: vi.fn()
     };
-    (spawn as jest.Mock).mockReturnValue(mockProcess);
+    vi.mocked(spawn).mockReturnValue(mockProcess);
     await processManager.start({ command: 'node', args: ['test.js'] });
 
     // Act
@@ -110,7 +117,7 @@ describe('ProcessManager', () => {
   it('handles process spawn failure - command not found', async () => {
     // Arrange
     const mockError = new Error('spawn nonexistent ENOENT');
-    (spawn as jest.Mock).mockImplementation(() => {
+    (spawn as vi.Mock).mockImplementation(() => {
       throw mockError;
     });
 
@@ -128,11 +135,11 @@ describe('ProcessManager', () => {
       stdout: new PassThrough(),
       stderr: null,
       pid: 456,
-      kill: jest.fn(),
-      once: jest.fn(),
-      removeAllListeners: jest.fn()
+      kill: vi.fn(),
+      once: vi.fn(),
+      removeAllListeners: vi.fn()
     };
-    (spawn as jest.Mock).mockReturnValue(mockProcess);
+    vi.mocked(spawn).mockReturnValue(mockProcess);
 
     // Act
     const process = await processManager.start({
@@ -154,20 +161,20 @@ describe('ProcessManager', () => {
       stdout: new PassThrough(),
       stderr: null,
       pid: 789,
-      kill: jest.fn(),
-      once: jest.fn(),
-      removeAllListeners: jest.fn()
+      kill: vi.fn(),
+      once: vi.fn(),
+      removeAllListeners: vi.fn()
     };
     const secondMockProcess = {
       stdin: new PassThrough(),
       stdout: new PassThrough(),
       stderr: null,
       pid: 101,
-      kill: jest.fn(),
-      once: jest.fn(),
-      removeAllListeners: jest.fn()
+      kill: vi.fn(),
+      once: vi.fn(),
+      removeAllListeners: vi.fn()
     };
-    (spawn as jest.Mock)
+    (spawn as vi.Mock)
       .mockReturnValueOnce(firstMockProcess)
       .mockReturnValueOnce(secondMockProcess);
 
@@ -195,7 +202,7 @@ describe('ProcessManager', () => {
       stderr: null,
       pid: 111
     };
-    (spawn as jest.Mock).mockReturnValue(mockProcess);
+    vi.mocked(spawn).mockReturnValue(mockProcess);
 
     // Act & Assert
     await expect(processManager.start({
@@ -212,7 +219,7 @@ describe('ProcessManager', () => {
       stderr: null,
       pid: 222
     };
-    (spawn as jest.Mock).mockReturnValue(mockProcess);
+    vi.mocked(spawn).mockReturnValue(mockProcess);
 
     // Act & Assert
     await expect(processManager.start({
@@ -228,16 +235,16 @@ describe('ProcessManager', () => {
       stdout: new PassThrough(),
       stderr: null,
       pid: 333,
-      kill: jest.fn<() => boolean>().mockReturnValue(true),
-      once: jest.fn<(event: string, callback: () => void) => void>((event: string, callback: () => void) => {
+      kill: vi.fn<() => boolean>().mockReturnValue(true),
+      once: vi.fn<(event: string, callback: () => void) => void>((event: string, callback: () => void) => {
         if (event === 'exit') {
           // Simulate process exiting during grace period
           setTimeout(callback, 50);
         }
       }),
-      removeAllListeners: jest.fn()
+      removeAllListeners: vi.fn()
     };
-    (spawn as jest.Mock).mockReturnValue(mockProcess);
+    vi.mocked(spawn).mockReturnValue(mockProcess);
     await processManager.start({ command: 'node', args: ['test.js'] });
 
     // Act

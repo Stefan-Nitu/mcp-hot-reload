@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, jest } from '@jest/globals';
+import { describe, it, expect, beforeEach, jest } from 'vitest';
 import { MessageRouter } from './message-router.js';
 import { PassThrough, Writable } from 'stream';
 import type { MessageQueue } from './message-queue.js';
@@ -10,8 +10,8 @@ describe('MessageRouter', () => {
   let clientOut: PassThrough;
   let serverIn: PassThrough;
   let serverOut: PassThrough;
-  let messageQueue: jest.Mocked<MessageQueue>;
-  let sessionTracker: jest.Mocked<SessionTracker>;
+  let messageQueue: vi.Mocked<MessageQueue>;
+  let sessionTracker: vi.Mocked<SessionTracker>;
 
   beforeEach(() => {
     clientIn = new PassThrough();
@@ -20,23 +20,21 @@ describe('MessageRouter', () => {
     serverOut = new PassThrough();
 
     // Create mock with only the methods we use in tests
-    // TypeScript requires type assertion due to private properties
     messageQueue = {
-      add: jest.fn<MessageQueue['add']>(),
-      flush: jest.fn<MessageQueue['flush']>().mockReturnValue([]),
-      clear: jest.fn<MessageQueue['clear']>(),
-      size: jest.fn<MessageQueue['size']>().mockReturnValue(0)
-    } as unknown as jest.Mocked<MessageQueue>;
+      add: vi.fn(),
+      flush: vi.fn().mockReturnValue([]),
+      clear: vi.fn(),
+      size: vi.fn().mockReturnValue(0)
+    } as vi.Mocked<MessageQueue>;
 
     // Create mock with only the methods we use in tests
-    // TypeScript requires type assertion due to private properties
     sessionTracker = {
-      trackInitializeRequest: jest.fn<SessionTracker['trackInitializeRequest']>(),
-      trackInitializeResponse: jest.fn<SessionTracker['trackInitializeResponse']>(),
-      getInitializeRequest: jest.fn<SessionTracker['getInitializeRequest']>(),
-      isInitialized: jest.fn<SessionTracker['isInitialized']>().mockReturnValue(false),
-      reset: jest.fn<SessionTracker['reset']>()
-    } as unknown as jest.Mocked<SessionTracker>;
+      trackInitializeRequest: vi.fn(),
+      trackInitializeResponse: vi.fn(),
+      getInitializeRequest: vi.fn(),
+      isInitialized: vi.fn().mockReturnValue(false),
+      reset: vi.fn()
+    } as vi.Mocked<SessionTracker>;
 
     router = new MessageRouter(
       clientIn,
@@ -259,7 +257,7 @@ describe('MessageRouter', () => {
     it('should queue messages when serverIn.write() throws exception', () => {
       // Arrange
       const mockServerIn = new PassThrough();
-      const mockWrite = jest.fn<(chunk: any) => boolean>().mockImplementation(() => {
+      const mockWrite = vi.fn<(chunk: any) => boolean>().mockImplementation(() => {
         throw new Error('Write failed');
       });
       // TypeScript limitation: overloaded signatures require type assertion
@@ -279,7 +277,7 @@ describe('MessageRouter', () => {
     it('should continue routing when clientOut.write() throws exceptions', () => {
       // Arrange
       const mockClientOut = new PassThrough();
-      const mockWrite = jest.fn<any>(() => {
+      const mockWrite = vi.fn<any>(() => {
         throw new Error('Client write failed');
       });
       // TypeScript limitation: overloaded signatures require type assertion
@@ -309,7 +307,7 @@ describe('MessageRouter', () => {
       messageQueue.flush.mockReturnValue(queuedMessages);
 
       const mockServerIn = new PassThrough();
-      const mockWrite = jest.fn<any>(() => {
+      const mockWrite = vi.fn<any>(() => {
         throw new Error('Flush write failed');
       });
       // TypeScript limitation: overloaded signatures require type assertion
@@ -357,7 +355,7 @@ describe('MessageRouter', () => {
     it('should not write to clientOut when it is destroyed', () => {
       // Arrange
       const mockClientOut = new PassThrough();
-      const mockWrite = jest.fn<(chunk: any) => boolean>().mockReturnValue(true);
+      const mockWrite = vi.fn<(chunk: any) => boolean>().mockReturnValue(true);
       // TypeScript limitation: overloaded signatures require type assertion
       mockClientOut.write = mockWrite as typeof mockClientOut.write;
       mockClientOut.destroy();
@@ -382,7 +380,7 @@ describe('MessageRouter', () => {
     it('should not write to clientOut when it is not writable', () => {
       // Arrange
       const mockClientOut = new PassThrough();
-      const mockWrite = jest.fn<(chunk: any) => boolean>().mockReturnValue(true);
+      const mockWrite = vi.fn<(chunk: any) => boolean>().mockReturnValue(true);
       // TypeScript limitation: overloaded signatures require type assertion
       mockClientOut.write = mockWrite as typeof mockClientOut.write;
       Object.defineProperty(mockClientOut, 'writable', {

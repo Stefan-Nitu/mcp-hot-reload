@@ -1,14 +1,14 @@
-import { describe, it, expect, beforeEach, jest } from '@jest/globals';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { BuildRunner } from './build-runner.js';
 import * as child_process from 'child_process';
 import { EventEmitter } from 'events';
 
-jest.mock('child_process');
-jest.mock('./utils/logger.js', () => ({
+vi.mock('child_process');
+vi.mock('./utils/logger.js', () => ({
   createLogger: () => ({
-    debug: jest.fn(),
-    warn: jest.fn(),
-    error: jest.fn()
+    debug: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn()
   })
 }));
 
@@ -28,13 +28,13 @@ describe('BuildRunner', () => {
   }
 
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
     mockProcess = new MockChildProcess();
   });
 
   it('returns true when build succeeds', async () => {
     // Arrange
-    const spawnMock = child_process.spawn as jest.Mock;
+    const spawnMock = vi.mocked(child_process.spawn);
     spawnMock.mockReturnValue(mockProcess);
     const buildRunner = new BuildRunner('npm run build', '/project');
 
@@ -49,7 +49,7 @@ describe('BuildRunner', () => {
 
   it('returns false when build fails', async () => {
     // Arrange
-    const spawnMock = child_process.spawn as jest.Mock;
+    const spawnMock = vi.mocked(child_process.spawn);
     spawnMock.mockReturnValue(mockProcess);
     const buildRunner = new BuildRunner('npm run build', '/project');
 
@@ -64,7 +64,7 @@ describe('BuildRunner', () => {
 
   it('returns true when no command provided', async () => {
     // Arrange
-    const spawnMock = child_process.spawn as jest.Mock;
+    const spawnMock = vi.mocked(child_process.spawn);
     const buildRunner = new BuildRunner('', '/project');
 
     // Act
@@ -77,7 +77,7 @@ describe('BuildRunner', () => {
 
   it('returns true for whitespace-only command', async () => {
     // Arrange
-    const spawnMock = child_process.spawn as jest.Mock;
+    const spawnMock = vi.mocked(child_process.spawn);
     const buildRunner = new BuildRunner('   ', '/project');
 
     // Act
@@ -90,7 +90,7 @@ describe('BuildRunner', () => {
 
   it('cancels build when new build is requested', async () => {
     // Arrange
-    const spawnMock = child_process.spawn as jest.Mock;
+    const spawnMock = vi.mocked(child_process.spawn);
     const firstProcess = new MockChildProcess();
     const secondProcess = new MockChildProcess();
     spawnMock.mockReturnValueOnce(firstProcess).mockReturnValueOnce(secondProcess);
@@ -113,7 +113,7 @@ describe('BuildRunner', () => {
 
   it('should cancel running build when cancel() is called', async () => {
     // Arrange
-    const spawnMock = child_process.spawn as jest.Mock;
+    const spawnMock = vi.mocked(child_process.spawn);
     spawnMock.mockReturnValue(mockProcess);
     const buildRunner = new BuildRunner('npm run build', '/project');
 

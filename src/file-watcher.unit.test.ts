@@ -1,42 +1,47 @@
-import { describe, it, expect, beforeEach, jest, afterEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { FileWatcher } from './file-watcher.js';
 import chokidar from 'chokidar';
 
-jest.mock('chokidar');
+// Use vi.hoisted to define the mock watcher that will be returned by chokidar.watch
+const { mockChokidarWatcher } = vi.hoisted(() => {
+  const mockChokidarWatcher = {
+    on: vi.fn(),
+    close: vi.fn(),
+    add: vi.fn(),
+    unwatch: vi.fn()
+  };
 
-interface MockChokidarWatcher {
-  on: jest.Mock;
-  close: jest.Mock;
-  add: jest.Mock;
-  unwatch: jest.Mock;
-}
+  // Make on() chainable by default
+  mockChokidarWatcher.on.mockReturnValue(mockChokidarWatcher);
+
+  return { mockChokidarWatcher };
+});
+
+vi.mock('chokidar', () => ({
+  default: {
+    watch: vi.fn(() => mockChokidarWatcher)
+  }
+}));
 
 describe('FileWatcher', () => {
   let watcher: FileWatcher;
-  let mockChokidarWatcher: MockChokidarWatcher;
-  let onChange: jest.Mock<() => void>;
+  let onChange: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
-    jest.clearAllMocks();
-    jest.useFakeTimers();
+    vi.clearAllMocks();
+    vi.useFakeTimers();
 
-    // Setup mock chokidar watcher
-    mockChokidarWatcher = {
-      on: jest.fn().mockReturnThis(),
-      close: jest.fn(),
-      add: jest.fn(),
-      unwatch: jest.fn()
-    };
-    (chokidar.watch as jest.Mock).mockReturnValue(mockChokidarWatcher);
+    // Reset mock to be chainable for each test
+    mockChokidarWatcher.on.mockReturnValue(mockChokidarWatcher);
 
-    onChange = jest.fn();
+    onChange = vi.fn();
   });
 
   afterEach(() => {
     if (watcher) {
       watcher.stop();
     }
-    jest.useRealTimers();
+    vi.useRealTimers();
   });
 
   describe('Basic Operations', () => {
@@ -164,11 +169,11 @@ describe('FileWatcher', () => {
 
   describe('Debouncing', () => {
     beforeEach(() => {
-      jest.useFakeTimers();
+      vi.useFakeTimers();
     });
 
     afterEach(() => {
-      jest.useRealTimers();
+      vi.useRealTimers();
     });
 
     it('should debounce rapid changes', () => {
@@ -192,7 +197,7 @@ describe('FileWatcher', () => {
       expect(onChange).not.toHaveBeenCalled();
 
       // Act - Advance timers
-      jest.advanceTimersByTime(100);
+      vi.advanceTimersByTime(100);
 
       // Assert - onChange called once after debounce
       expect(onChange).toHaveBeenCalledTimes(1);
@@ -212,17 +217,17 @@ describe('FileWatcher', () => {
 
       // Act
       changeHandler?.('src/file1.ts');
-      jest.advanceTimersByTime(50);
+      vi.advanceTimersByTime(50);
       changeHandler?.('src/file2.ts');
-      jest.advanceTimersByTime(50);
+      vi.advanceTimersByTime(50);
       changeHandler?.('src/file3.ts');
-      jest.advanceTimersByTime(50);
+      vi.advanceTimersByTime(50);
 
       // Assert - Still not called (timer kept resetting)
       expect(onChange).not.toHaveBeenCalled();
 
       // Act - Wait for full debounce period
-      jest.advanceTimersByTime(50);
+      vi.advanceTimersByTime(50);
 
       // Assert - Now it should be called
       expect(onChange).toHaveBeenCalledTimes(1);
@@ -259,13 +264,13 @@ describe('FileWatcher', () => {
         onChange
       });
       watcher.start();
-      const firstCallCount = (chokidar.watch as jest.Mock).mock.calls.length;
+      const firstCallCount = (chokidar.watch as vi.Mock).mock.calls.length;
 
       // Act - Try to start again
       watcher.start();
 
       // Assert - chokidar.watch should not be called again
-      expect((chokidar.watch as jest.Mock).mock.calls.length).toBe(firstCallCount);
+      expect((chokidar.watch as vi.Mock).mock.calls.length).toBe(firstCallCount);
     });
 
     it('should not throw when stopping without starting', () => {
