@@ -62,23 +62,30 @@ npx mcp-hot-reload
 
 ### Basic Usage
 
-In your MCP server directory, provide the server command:
+1. **Initialize configuration** (recommended):
 
 ```bash
-npx mcp-hot-reload node dist/index.js
+cd /path/to/your/mcp-server
+npx mcp-hot-reload --init
 ```
 
-Or with a configuration file (`proxy.config.json`):
+This creates a `hot-reload.config.json` with sensible defaults. Edit it if needed, then run:
 
 ```bash
-npx mcp-hot-reload  # Uses settings from proxy.config.json
+npx mcp-hot-reload
+```
+
+2. **Or use command line arguments**:
+
+```bash
+npx mcp-hot-reload node dist/index.js --watch src/**/*.ts
 ```
 
 This will:
-1. Start your server with the specified command
-2. Watch the `src/` directory for changes (default)
-3. Run `npm run build` when files change (default)
-4. Restart the server while preserving the session
+- Start your server with the specified command
+- Watch for file changes in your source directory
+- Run the build command when files change (if configured)
+- Restart the server while preserving the session
 
 ### Integration with Claude Desktop
 
@@ -88,9 +95,52 @@ Update your `claude_desktop_config.json`:
 {
   "mcpServers": {
     "your-server": {
-      "command": "npx",
-      "args": ["mcp-hot-reload"],
-      "cwd": "/path/to/your/mcp-server"
+      "type": "stdio",
+      "command": "mcp-hot-reload",
+      "args": [
+        "node",
+        "/path/to/your/mcp-server/dist/index.js",
+        "--watch",
+        "/path/to/your/mcp-server/src/**/*.ts"
+      ]
+    }
+  }
+}
+```
+
+To watch multiple paths, use comma-separated patterns:
+
+```json
+{
+  "mcpServers": {
+    "your-server": {
+      "type": "stdio",
+      "command": "mcp-hot-reload",
+      "args": [
+        "node",
+        "/path/to/your/mcp-server/dist/index.js",
+        "--watch",
+        "/path/to/your/mcp-server/src,/path/to/your/mcp-server/lib,/path/to/your/mcp-server/config"
+      ]
+    }
+  }
+}
+```
+
+Or specify exact file types with glob patterns:
+
+```json
+{
+  "mcpServers": {
+    "your-server": {
+      "type": "stdio",
+      "command": "mcp-hot-reload",
+      "args": [
+        "node",
+        "/path/to/your/mcp-server/dist/index.js",
+        "--watch",
+        "/path/to/your/mcp-server/src/**/*.{ts,tsx},/path/to/your/mcp-server/lib/**/*.js"
+      ]
     }
   }
 }
@@ -111,7 +161,7 @@ The tool works out-of-the-box with these defaults:
 
 ### Custom Configuration
 
-Create a `proxy.config.json` in your project root:
+Create a `hot-reload.config.json` in your project root:
 
 ```json
 {
@@ -252,6 +302,8 @@ Languages that run source directly can skip the build:
 
 ### Watch Pattern Best Practices
 
+⚠️ **IMPORTANT WARNING**: Never use broad patterns like `/**/*.js` or `/**/*.ts` at the project root level. This will watch thousands of files including node_modules and cause performance issues or crashes!
+
 For large projects, specific watch patterns prevent performance issues:
 
 #### ❌ Avoid Overly Broad Patterns
@@ -262,10 +314,23 @@ For large projects, specific watch patterns prevent performance issues:
 }
 ```
 
+```json
+{
+  "watchPattern": "/**/*.js"  // NEVER DO THIS - watches entire filesystem!
+}
+```
+
+```json
+{
+  "watchPattern": "/path/to/project/**/*.js"  // Still too broad - includes node_modules!
+}
+```
+
 **Problems:**
 - High CPU usage from watching thousands of files
 - Slow startup while indexing files
 - False rebuilds from unrelated file changes
+- Can cause infinite loops (source → build → dist changes → rebuild)
 
 #### ✅ Use Specific Patterns
 
@@ -339,6 +404,19 @@ The hot-reload tool acts as a transparent proxy between the MCP client and your 
 
 ## API Reference
 
+### CLI Options
+
+```bash
+mcp-hot-reload [options] [serverCommand] [serverArgs...] [--watch patterns]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--help`, `-h` | Show help message |
+| `--version`, `-v` | Show version number |
+| `--init` | Create a hot-reload.config.json with default settings |
+| `--watch <patterns>` | Comma-separated glob patterns to watch |
+
 ### Configuration Options
 
 | Option | Type | Default | Description |
@@ -349,7 +427,6 @@ The hot-reload tool acts as a transparent proxy between the MCP client and your 
 | `watchPattern` | `string \| string[]` | `'./src'` | What to watch for changes:<br>• **Directory** (e.g., `./src`): Watches all TypeScript files<br>• **Glob pattern** (e.g., `./src/**/*.py`): Watches specific file types<br>• **Performance tip:** Be specific to avoid watching unnecessary files |
 | `debounceMs` | `number` | `300` | Milliseconds to wait before rebuilding |
 | `env` | `object` | `{}` | Environment variables for server process |
-| `cwd` | `string` | `process.cwd()` | Working directory |
 
 ### Programmatic Usage
 
@@ -381,7 +458,7 @@ await hotReload.stop();
 Complete setup for a TypeScript MCP server:
 
 ```json
-// proxy.config.json
+// hot-reload.config.json
 {
   "serverCommand": "node",
   "serverArgs": ["dist/index.js"],
@@ -396,6 +473,7 @@ Complete setup for a TypeScript MCP server:
 {
   "mcpServers": {
     "my-typescript-server": {
+      "type": "stdio",
       "command": "mcp-hot-reload",
       "args": [
         "node",
@@ -413,7 +491,7 @@ Complete setup for a TypeScript MCP server:
 Setup for a Python MCP server:
 
 ```json
-// proxy.config.json
+// hot-reload.config.json
 {
   "serverCommand": "python",
   "serverArgs": ["-u", "src/server.py"],
@@ -492,9 +570,29 @@ After installing mcp-hot-reload globally (`npm install -g mcp-hot-reload`), conf
 }
 ```
 
-### Alternative: Using Without Global Installation
+### Alternative: Local Installation
 
-If you prefer not to install globally, you can run mcp-hot-reload directly from its directory:
+If mcp-hot-reload is installed locally in your project:
+
+```json
+{
+  "mcpServers": {
+    "your-server": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "mcp-hot-reload",
+        "node",
+        "/path/to/your/mcp-server/dist/index.js",
+        "--watch",
+        "/path/to/your/mcp-server/src/**/*.ts"
+      ]
+    }
+  }
+}
+```
+
+Or run directly from mcp-hot-reload source:
 
 ```json
 {
@@ -507,7 +605,7 @@ If you prefer not to install globally, you can run mcp-hot-reload directly from 
         "node",
         "/path/to/your/mcp-server/dist/index.js",
         "--watch",
-        "src/**/*.ts,src/**/*.js"
+        "/path/to/your/mcp-server/src/**/*.ts"
       ]
     }
   }
@@ -516,10 +614,10 @@ If you prefer not to install globally, you can run mcp-hot-reload directly from 
 
 ### Configuration Best Practices
 
-- **Always use absolute paths** for server locations to ensure the configuration works from any directory
-- **Never use `cwd`** in the configuration as it restricts where you can run Claude Code from
-- The proxy automatically derives the working directory from the server's absolute path
-- Watch patterns are resolved relative to the server's directory
+- **Use absolute paths** for server executables to ensure reliability
+- **Use absolute paths** for watch patterns in production configs
+- The default watch pattern `./src` works when running from your server directory
+- Watch patterns are resolved relative to where the proxy runs
 
 ## Troubleshooting
 

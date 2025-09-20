@@ -181,6 +181,67 @@ describe('HotReload', () => {
   });
 
   describe('concurrent operations', () => {
+    it('should coalesce multiple pending changes into a single restart', async () => {
+      // Arrange
+      let buildCount = 0;
+      let restartCount = 0;
+
+      // Track when builds happen
+      mockBuildRunner.run.mockImplementation(async () => {
+        buildCount++;
+        await new Promise(resolve => setTimeout(resolve, 50));
+        return true;
+      });
+
+      // Track when restarts happen
+      mockOnRestart.mockImplementation(async () => {
+        restartCount++;
+        await new Promise(resolve => setTimeout(resolve, 50));
+      });
+
+      // Act - Trigger 10 rapid file changes
+      const promises = [];
+      for (let i = 0; i < 10; i++) {
+        promises.push(hotReload.handleFileChange());
+      }
+
+      await Promise.all(promises);
+
+      // Assert - Should only build/restart at most 2 times
+      // Once for the first change, once for all the pending changes
+      expect(buildCount).toBeLessThanOrEqual(2);
+      expect(restartCount).toBeLessThanOrEqual(2);
+    });
+
+    it('should prevent overlapping restarts when multiple file changes occur rapidly', async () => {
+      // Arrange - Track if restarts overlap (race condition)
+      let activeRestarts = 0;
+      let maxConcurrentRestarts = 0;
+
+      mockBuildRunner.run.mockResolvedValue(true);
+
+      // Simulate slow restart that takes 100ms
+      mockOnRestart.mockImplementation(async () => {
+        activeRestarts++;
+        maxConcurrentRestarts = Math.max(maxConcurrentRestarts, activeRestarts);
+        await new Promise(resolve => setTimeout(resolve, 100));
+        activeRestarts--;
+      });
+
+      // Act - Trigger 3 file changes in rapid succession
+      const promises = [];
+      for (let i = 0; i < 3; i++) {
+        promises.push(hotReload.handleFileChange());
+        await new Promise(resolve => setTimeout(resolve, 10)); // Small delay between changes
+      }
+
+      await Promise.all(promises);
+
+      // Assert - Without mutex protection, this test will FAIL
+      // It exposes the race condition where multiple restarts run concurrently
+      expect(maxConcurrentRestarts).toBe(1); // Should never have more than 1 restart at a time
+    });
+
     it('should handle multiple concurrent handleFileChange calls', async () => {
       // Arrange
       mockBuildRunner.run.mockResolvedValue(true);
@@ -201,9 +262,10 @@ describe('HotReload', () => {
 
       await Promise.all(promises);
 
-      // Assert - All operations should complete
-      expect(mockBuildRunner.run).toHaveBeenCalledTimes(3);
-      expect(restartCount).toBe(3);
+      // Assert - With coalescing, multiple concurrent calls result in at most 2 cycles
+      // (one in progress, one pending)
+      expect(mockBuildRunner.run).toHaveBeenCalledTimes(2);
+      expect(restartCount).toBe(2);
     });
 
     it('should handle concurrent operations with mixed success/failure', async () => {
@@ -211,21 +273,22 @@ describe('HotReload', () => {
       let buildCallCount = 0;
       mockBuildRunner.run.mockImplementation(async () => {
         buildCallCount++;
+        await new Promise(resolve => setTimeout(resolve, 10));
         return buildCallCount % 2 === 1; // Alternate success/failure
       });
 
       // Act
       const promises = [
-        hotReload.handleFileChange(), // Should succeed
-        hotReload.handleFileChange(), // Should fail
-        hotReload.handleFileChange()  // Should succeed
+        hotReload.handleFileChange(),
+        hotReload.handleFileChange(),
+        hotReload.handleFileChange()
       ];
 
       await Promise.all(promises);
 
-      // Assert
-      expect(mockBuildRunner.run).toHaveBeenCalledTimes(3);
-      expect(mockOnRestart).toHaveBeenCalledTimes(2); // Only successful builds
+      // Assert - With coalescing, only 2 builds occur
+      expect(mockBuildRunner.run).toHaveBeenCalledTimes(2);
+      expect(mockOnRestart).toHaveBeenCalledTimes(1); // Only first build succeeds
     });
   });
 

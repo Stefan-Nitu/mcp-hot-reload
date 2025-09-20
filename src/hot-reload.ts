@@ -12,6 +12,9 @@ const log = createLogger('hot-reload');
  * - Waits for next change if build fails
  */
 export class HotReload {
+  private hasPendingChange = false;
+  private currentOperation: Promise<void> | null = null;
+
   constructor(
     private buildRunner: BuildRunner,
     private fileWatcher: FileWatcher,
@@ -27,6 +30,39 @@ export class HotReload {
   }
 
   async handleFileChange(): Promise<void> {
+    // Mark that we have a change to process
+    this.hasPendingChange = true;
+
+    // If already processing, just wait for the current operation
+    if (this.currentOperation) {
+      return this.currentOperation;
+    }
+
+    // Start processing
+    this.currentOperation = this.processChanges();
+
+    try {
+      await this.currentOperation;
+    } finally {
+      this.currentOperation = null;
+    }
+  }
+
+  private async processChanges(): Promise<void> {
+    while (this.hasPendingChange) {
+      this.hasPendingChange = false;
+
+      try {
+        await this.performBuildAndRestart();
+      } catch (error) {
+        // Log error but continue processing if there are more changes
+        log.error({ err: error }, 'Error in build/restart cycle');
+        throw error;
+      }
+    }
+  }
+
+  private async performBuildAndRestart(): Promise<void> {
     log.info('File change detected, starting build/restart cycle');
 
     // Cancel any ongoing build when new changes arrive

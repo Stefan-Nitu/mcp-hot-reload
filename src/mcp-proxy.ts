@@ -74,7 +74,7 @@ export class MCPProxy {
           this.messageRouter.disconnectServer();
         },
         onShutdown: (exitCode) => {
-          this.cleanup();
+          // Skip cleanup and exit immediately - Claude only waits 250ms
           this.config.onExit(exitCode);
         }
       }

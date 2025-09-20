@@ -1,8 +1,82 @@
-# MCP Server Testing Guide
+# MCP Server Testing Guide with Vitest
 
 ## Overview
 
-This guide presents comprehensive testing strategies for TypeScript MCP (Model Context Protocol) servers, based on official best practices and the unique requirements of the MCP architecture.
+This guide presents comprehensive testing strategies for TypeScript MCP (Model Context Protocol) servers using Vitest, based on official best practices and the unique requirements of the MCP architecture. Vitest is chosen for its native ESM support, TypeScript integration, and superior performance with modern JavaScript tooling.
+
+## Vitest Configuration for MCP Servers
+
+### Basic Setup
+
+```typescript
+// vitest.config.ts
+/// <reference types="vitest" />
+import { defineConfig } from 'vite';
+
+export default defineConfig({
+  test: {
+    globals: true,
+    environment: 'node',
+    setupFiles: ['./test/setup.ts'],
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'json', 'html'],
+      exclude: [
+        'node_modules/',
+        'test/',
+        '*.config.ts',
+        'dist/'
+      ],
+      thresholds: {
+        statements: 80,
+        branches: 80,
+        functions: 80,
+        lines: 80
+      }
+    },
+    testTimeout: 10000,
+    hookTimeout: 10000
+  },
+  esbuild: {
+    target: 'node18'
+  }
+});
+```
+
+### TypeScript Configuration
+
+```json
+// tsconfig.json
+{
+  "compilerOptions": {
+    "types": ["vitest/globals"],
+    "typeRoots": ["./node_modules/@types", "./node_modules"]
+  },
+  "include": ["src/**/*", "test/**/*"]
+}
+```
+
+### Test Setup File
+
+```typescript
+// test/setup.ts
+import { vi } from 'vitest';
+
+// Mock console methods to avoid cluttering test output
+globalThis.console = {
+  ...console,
+  log: vi.fn(),
+  error: vi.fn(),
+  warn: vi.fn(),
+  info: vi.fn(),
+  debug: vi.fn()
+};
+
+// Reset all mocks after each test
+afterEach(() => {
+  vi.clearAllMocks();
+});
+```
 
 ## Core Testing Principles for MCP Servers
 
@@ -44,10 +118,12 @@ For servers using STDIO transport, critical requirements:
 
 ```typescript
 // test/stdio.test.ts
+import { vi, describe, it, expect, beforeEach } from 'vitest';
+
 describe('STDIO Transport Compliance', () => {
   it('should NEVER write logs to stdout', () => {
     // Arrange
-    const stdoutSpy = jest.spyOn(process.stdout, 'write');
+    const stdoutSpy = vi.spyOn(process.stdout, 'write');
     const server = new MCPServer();
 
     // Act
@@ -61,7 +137,7 @@ describe('STDIO Transport Compliance', () => {
 
   it('should write all logs to stderr', () => {
     // Arrange
-    const stderrSpy = jest.spyOn(process.stderr, 'write');
+    const stderrSpy = vi.spyOn(process.stderr, 'write');
 
     // Act
     logger.info('Server started');
@@ -78,6 +154,7 @@ Test MCP tools as isolated functions with clear inputs and outputs:
 
 ```typescript
 // tools/__tests__/build.test.ts
+import { describe, it, expect, vi } from 'vitest';
 import { buildTool, buildSchema } from '../build';
 import { z } from 'zod';
 
@@ -110,7 +187,7 @@ describe('Build Tool', () => {
   describe('Tool Execution', () => {
     it('should return MCP-formatted response on success', async () => {
       // Arrange
-      const mockExec = jest.fn().mockResolvedValue({
+      const mockExec = vi.fn().mockResolvedValue({
         stdout: 'Build Succeeded',
         stderr: ''
       });
@@ -134,7 +211,7 @@ describe('Build Tool', () => {
 
     it('should handle build failures gracefully', async () => {
       // Arrange
-      const mockExec = jest.fn().mockRejectedValue(
+      const mockExec = vi.fn().mockRejectedValue(
         new Error('Build failed: No such module')
       );
 
@@ -192,11 +269,14 @@ npx @modelcontextprotocol/inspector node dist/index.js --config ./config.json
 ### Testing Tool Functions
 
 ```typescript
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import type { MockedFunction } from 'vitest';
+
 describe('Simulator Tool', () => {
-  let mockExecutor: jest.MockedFunction<ExecuteCommand>;
+  let mockExecutor: MockedFunction<ExecuteCommand>;
 
   beforeEach(() => {
-    mockExecutor = jest.fn();
+    mockExecutor = vi.fn();
   });
 
   it('should list available simulators', async () => {
@@ -225,6 +305,9 @@ describe('Simulator Tool', () => {
 ### Testing Schema Validation
 
 ```typescript
+import { describe, it, expect } from 'vitest';
+import { z } from 'zod';
+
 describe('Input Validation', () => {
   it('should validate enum values strictly', () => {
     const schema = z.object({
@@ -254,6 +337,7 @@ describe('Input Validation', () => {
 ### Testing Server Initialization
 
 ```typescript
+import { describe, it, expect, beforeEach } from 'vitest';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 
@@ -534,129 +618,283 @@ jobs:
           npx @modelcontextprotocol/inspector node dist/index.js --test-mode
 ```
 
-## Jest TypeScript Mocking Best Practices
+## Vitest TypeScript Mocking Best Practices
 
-### 1. Always Provide Explicit Type Signatures to jest.fn()
+### 1. Modern vi.fn() Type Signatures
 
-TypeScript requires explicit function signatures for proper type inference with mocks.
+Vitest uses a simplified generic type system for mock functions:
 
 ```typescript
-// ❌ BAD - Causes "type never" errors
-const mockFunction = jest.fn();
-mockFunction.mockResolvedValue({ success: true }); // Error: type 'never'
+import { vi, type Mock, type MockedFunction } from 'vitest';
 
-// ✅ GOOD - Consistent approach with @jest/globals
-import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+// ✅ GOOD - Modern Vitest approach with function type
+const mockFunction = vi.fn<() => Promise<{ success: boolean }>>();
+mockFunction.mockResolvedValue({ success: true });
 
-// Use single type parameter with function signature
-const mockFunction = jest.fn<() => Promise<{ success: boolean }>>();
-mockFunction.mockResolvedValue({ success: true }); // Works!
-
-// With parameters
-const mockExecAsync = jest.fn<(cmd: string) => Promise<{ stdout: string; stderr: string }>>();
+// With parameters - pass the entire function signature
+const mockExecAsync = vi.fn<(cmd: string) => Promise<{ stdout: string; stderr: string }>>();
 
 // Multiple parameters
-const mockCallback = jest.fn<(error: Error | null, data?: string) => void>();
+const mockCallback = vi.fn<(error: Error | null, data?: string) => void>();
+
+// Using MockedFunction type for better inference
+let mockExecutor: MockedFunction<(cmd: string) => Promise<string>>;
+mockExecutor = vi.fn();
 ```
 
-### 2. Mock Node.js Built-in Modules Correctly
+### 1.1 Solving "Cannot access before initialization" with vi.hoisted()
+
+When mocking modules that use variables from the test scope, use `vi.hoisted()`:
 
 ```typescript
-// Mock at module level before imports
-const mockExecAsync = jest.fn<(cmd: string) => Promise<{ stdout: string; stderr: string }>>();
-jest.mock('child_process');
-jest.mock('util', () => ({
+// ❌ BAD - Causes "Cannot access before initialization" error
+const mockExecAsync = vi.fn();
+vi.mock('util', () => ({
+  promisify: () => mockExecAsync // Error: mockExecAsync not available yet
+}));
+
+// ✅ GOOD - Using vi.hoisted() to define variables
+const { mockExecAsync } = vi.hoisted(() => ({
+  mockExecAsync: vi.fn<(cmd: string) => Promise<{ stdout: string; stderr: string }>>()
+}));
+
+vi.mock('util', () => ({
+  promisify: () => mockExecAsync // Now mockExecAsync is available
+}));
+
+// ✅ ALTERNATIVE - Use "mock" prefix (Vitest doesn't hoist these)
+const mockExecAsync = vi.fn(); // Note: "mock" prefix
+vi.mock('util', () => ({
   promisify: () => mockExecAsync
 }));
 
-// Then import the module under test
-import { listSimulators } from '../../../tools/simulator/list.js';
+// ✅ ALTERNATIVE - Use vi.doMock() for non-hoisted mocking
+const mockExecAsync = vi.fn();
+vi.doMock('util', () => ({
+  promisify: () => mockExecAsync
+}));
+// Note: Must import the module AFTER vi.doMock()
+```
+
+### 2. Mocking ESM Modules with vi.mock()
+
+For ESM modules, use async factory functions with proper typing:
+
+```typescript
+import type * as NavigationModule from './navigation';
+
+// Mock ESM module with type safety
+vi.mock('./navigation', async () => {
+  const actual = await vi.importActual<typeof NavigationModule>('./navigation');
+  return {
+    ...actual,
+    navigate: vi.fn(),
+  };
+});
+
+// For Node.js built-in modules
+vi.mock('fs/promises', () => ({
+  readFile: vi.fn(),
+  writeFile: vi.fn(),
+}));
+
+// Access mocked functions with vi.mocked()
+import { navigate } from './navigation';
+const mockedNavigate = vi.mocked(navigate);
+mockedNavigate.mockResolvedValue({ success: true });
 ```
 
 ### 3. Match Async vs Sync Return Types
 
 ```typescript
-// Synchronous
-const mockSync = jest.fn<() => string>();
+// Synchronous mock
+const mockSync = vi.fn<() => string>();
 mockSync.mockReturnValue('result');
 
-// Asynchronous
-const mockAsync = jest.fn<() => Promise<string>>();
+// Asynchronous mock - use mockResolvedValue
+const mockAsync = vi.fn<() => Promise<string>>();
 mockAsync.mockResolvedValue('result');
+
+// Chain multiple async responses
+mockAsync
+  .mockResolvedValueOnce('first')
+  .mockRejectedValueOnce(new Error('error'))
+  .mockResolvedValue('default');
 ```
 
-### 4. Factory Pattern for Test Setup
+### 4. Factory Pattern with Vitest
 
 ```typescript
-function createSUT() {
-  const mockExecute = jest.fn<(cmd: string) => Promise<{ stdout: string }>>();
-  const mockExecutor: ICommandExecutor = { execute: mockExecute };
-  const sut = new MyService(mockExecutor);
-  return { sut, mockExecute }; // Return both for easy access
+import { vi } from 'vitest';
+
+function createTestContext() {
+  const mockExecute = vi.fn<(cmd: string) => Promise<{ stdout: string }>>();
+  const mockLogger = {
+    info: vi.fn(),
+    error: vi.fn(),
+  };
+
+  return {
+    mocks: { mockExecute, mockLogger },
+    sut: new MyService({ execute: mockExecute, logger: mockLogger }),
+  };
 }
 
-// Usage
-it('should execute command', async () => {
-  const { sut, mockExecute } = createSUT();
-  mockExecute.mockResolvedValue({ stdout: 'success' });
+// Usage with beforeEach
+describe('MyService', () => {
+  let ctx: ReturnType<typeof createTestContext>;
 
-  const result = await sut.run();
-  expect(result).toBe('success');
+  beforeEach(() => {
+    ctx = createTestContext();
+  });
+
+  it('should execute command', async () => {
+    ctx.mocks.mockExecute.mockResolvedValue({ stdout: 'success' });
+
+    const result = await ctx.sut.run();
+    expect(result).toBe('success');
+  });
 });
 ```
 
-### 5. Never Use Type Casting - Fix the Root Cause
+### 5. Using vi.mocked() for Type Safety
 
 ```typescript
-// ❌ BAD - Type casting hides problems
-const mockFunction = jest.fn() as any;
+import { readFile } from 'fs/promises';
+import { vi } from 'vitest';
 
-// ✅ GOOD - Proper typing
-type BuildFunction = (path: string) => Promise<BuildResult>;
-const mockBuild = jest.fn<BuildFunction>();
+vi.mock('fs/promises');
+
+// vi.mocked provides proper type inference
+const mockedReadFile = vi.mocked(readFile);
+mockedReadFile.mockResolvedValue(Buffer.from('content'));
+
+// Works with deep mocking
+vi.mocked(console.log).mockImplementation(() => {});
 ```
 
-### 6. Handling Classes with Private Properties
-
-When mocking classes that have private properties, TypeScript requires type assertions:
+### 6. Handling Partial Mocks and Spies
 
 ```typescript
-// ✅ GOOD - Type-safe mock with assertion
-const mockQueue = {
-  add: jest.fn<MessageQueue['add']>(),
-  flush: jest.fn<MessageQueue['flush']>().mockReturnValue([])
-} as unknown as jest.Mocked<MessageQueue>;
+import { vi } from 'vitest';
 
-// ❌ BAD - Using as any loses all type safety
-const mockQueue = { add: jest.fn() } as any;
+// Spy on existing object methods
+const spy = vi.spyOn(console, 'log');
+
+// Partial mock of a module
+vi.mock('./utils', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./utils')>();
+  return {
+    ...actual,
+    heavyFunction: vi.fn().mockReturnValue('mocked'),
+  };
+});
+
+// Mock specific class methods
+class Service {
+  async fetch(id: string) { /* ... */ }
+}
+
+const service = new Service();
+vi.spyOn(service, 'fetch').mockResolvedValue({ id: '1', name: 'Test' });
 ```
 
-### 7. Mocking Overloaded Methods (e.g., Stream.write)
-
-Node.js streams have overloaded write signatures. Use proper type assertions:
+### 7. Concurrent and Parallel Testing
 
 ```typescript
-// ✅ GOOD - Maintains type safety for overloaded methods
-const mockWrite = jest.fn<(chunk: any) => boolean>().mockReturnValue(true);
-mockStream.write = mockWrite as typeof mockStream.write;
+import { describe, it, expect } from 'vitest';
 
-// For casting mock functions on existing objects
-const startMock = processManager.start as jest.MockedFunction<typeof processManager.start>;
-startMock.mockResolvedValue(mockProcess);
+// Run all tests in this suite concurrently
+describe.concurrent('Parallel API tests', () => {
+  it('fetches user data', async () => {
+    // This test runs in parallel with others
+  });
+
+  it('fetches post data', async () => {
+    // Runs concurrently with the test above
+  });
+
+  // Mark specific test as sequential within concurrent suite
+  it.sequential('updates database', async () => {
+    // This runs after parallel tests complete
+  });
+});
+
+// Configure concurrency in vitest.config.ts
+export default defineConfig({
+  test: {
+    maxConcurrency: 5,
+    sequence: {
+      concurrent: true, // Run all tests concurrently by default
+    },
+  },
+});
+```
+
+### 8. Vitest-Specific Features for MCP Testing
+
+```typescript
+import { vi, expect, beforeAll, afterEach } from 'vitest';
+
+// Fake timers for timeout testing
+beforeAll(() => {
+  vi.useFakeTimers();
+});
+
+afterEach(() => {
+  vi.runOnlyPendingTimers();
+  vi.useRealTimers();
+});
+
+// Test with controlled time
+it('should timeout after 5 seconds', async () => {
+  const promise = mcpServer.callTool('long-running');
+
+  // Fast-forward time
+  await vi.advanceTimersByTimeAsync(5000);
+
+  await expect(promise).rejects.toThrow('Timeout');
+});
+
+// Snapshot testing for MCP responses
+it('should return correct tool response format', async () => {
+  const response = await mcpServer.callTool('refactor', {
+    type: 'rename',
+    oldName: 'foo',
+    newName: 'bar'
+  });
+
+  expect(response).toMatchSnapshot();
+});
+
+// In-source testing (colocate tests with implementation)
+// Useful for small utility functions
+export function validatePath(path: string): boolean {
+  return path.endsWith('.ts') || path.endsWith('.js');
+}
+
+if (import.meta.vitest) {
+  const { describe, it, expect } = import.meta.vitest;
+  describe('validatePath', () => {
+    it('accepts TypeScript files', () => {
+      expect(validatePath('test.ts')).toBe(true);
+    });
+  });
+}
 ```
 
 ## Best Practices Summary
 
 1. **Always test stderr vs stdout compliance** - Critical for STDIO transport
-2. **Use explicit type signatures for jest.fn()** - Prevents TypeScript "never" errors
-3. **Test schemas separately from logic** - Ensures validation works correctly
-4. **Mock only at boundaries** - Keep tests fast but test real interactions
-5. **Test error paths explicitly** - Users need clear error messages
-6. **Validate MCP response format** - Must match protocol specification
-7. **Use integration tests for protocol compliance** - Verify full message flow
-8. **Keep tests focused and fast** - Run frequently during development
-9. **Use factory methods for test setup** - Makes tests maintainable
-10. **Never use type casting in tests** - Fix type issues properly
+2. **Use explicit type signatures for vi.fn()** - Ensures TypeScript type safety
+3. **Mock ESM modules with async factories** - Use vi.importActual for partial mocks
+4. **Leverage vi.mocked() for type inference** - Better than type assertions
+5. **Test schemas separately from logic** - Ensures validation works correctly
+6. **Test error paths explicitly** - Users need clear error messages
+7. **Validate MCP response format** - Must match protocol specification
+8. **Use describe.concurrent for parallel tests** - Faster test execution
+9. **Create test context factories** - Better than scattered setup code
+10. **Use vi.spyOn for partial mocking** - Maintains original functionality
 
 ## Troubleshooting Test Failures
 
