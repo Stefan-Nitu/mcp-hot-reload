@@ -640,6 +640,12 @@ const mockCallback = vi.fn<(error: Error | null, data?: string) => void>();
 // Using MockedFunction type for better inference
 let mockExecutor: MockedFunction<(cmd: string) => Promise<string>>;
 mockExecutor = vi.fn();
+
+// ✅ BEST - Use interface method types directly
+interface MyService {
+  execute(cmd: string): Promise<void>;
+}
+const mockExecute = vi.fn<MyService['execute']>();
 ```
 
 ### 1.1 Solving "Cannot access before initialization" with vi.hoisted()
@@ -722,11 +728,43 @@ mockAsync
   .mockResolvedValue('default');
 ```
 
-### 4. Factory Pattern with Vitest
+### 4. Factory Pattern with Vitest (Recommended for Type Safety)
 
 ```typescript
 import { vi } from 'vitest';
 
+// ✅ BEST - Type-safe factory patterns without type assertions
+function createMockService(): MyService {
+  return {
+    execute: vi.fn<MyService['execute']>(),
+    query: vi.fn<MyService['query']>(),
+    status: 'ready' // Non-function properties
+  };
+}
+
+// With partial mocking using satisfies
+function createPartialMock() {
+  return {
+    execute: vi.fn(),
+    query: vi.fn()
+  } satisfies Partial<MyService>;
+}
+
+// Factory with overrides pattern
+function createMockChildProcess(overrides: Partial<ChildProcess> = {}): ChildProcess {
+  const emitter = new EventEmitter();
+
+  return Object.assign(emitter, {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: null,
+    pid: 123,
+    kill: vi.fn().mockReturnValue(true),
+    ...overrides
+  }) as ChildProcess;
+}
+
+// Context-based testing pattern
 function createTestContext() {
   const mockExecute = vi.fn<(cmd: string) => Promise<{ stdout: string }>>();
   const mockLogger = {
@@ -883,6 +921,61 @@ if (import.meta.vitest) {
 }
 ```
 
+## Avoiding Type Assertions in Tests
+
+### ❌ AVOID: Type Assertions with "as unknown as"
+
+```typescript
+// BAD - Loses type safety and hides potential issues
+const mockService = {
+  execute: vi.fn()
+} as unknown as MyService;
+
+// BAD - Multiple assertions are a code smell
+const mock = someObject as unknown as SomeType as AnotherType;
+```
+
+### ✅ PREFER: Type-Safe Alternatives
+
+```typescript
+// GOOD - Use factory functions
+function createMockService(): MyService {
+  return {
+    execute: vi.fn<MyService['execute']>(),
+    query: vi.fn<MyService['query']>(),
+    // ... implement all required properties
+  };
+}
+
+// GOOD - Use satisfies for partial mocks
+const partialMock = {
+  execute: vi.fn(),
+  query: vi.fn()
+} satisfies Partial<MyService>;
+
+// GOOD - Use vi.mocked() for module mocks
+import { service } from './service';
+vi.mock('./service');
+const mockedService = vi.mocked(service);
+```
+
+### When Type Assertions Are Acceptable
+
+```typescript
+// ACCEPTABLE - For complex EventEmitter merging patterns
+function createMockProcess(): ChildProcess {
+  const emitter = new EventEmitter();
+  // Complex object merging that TypeScript can't infer
+  return Object.assign(emitter, {
+    stdin: new PassThrough(),
+    // ... other properties
+  }) as ChildProcess;  // Single assertion at the end
+}
+
+// ACCEPTABLE - When testing error cases
+const invalidInput = { foo: 'bar' } as ValidInput; // Testing schema validation
+```
+
 ## Best Practices Summary
 
 1. **Always test stderr vs stdout compliance** - Critical for STDIO transport
@@ -895,6 +988,8 @@ if (import.meta.vitest) {
 8. **Use describe.concurrent for parallel tests** - Faster test execution
 9. **Create test context factories** - Better than scattered setup code
 10. **Use vi.spyOn for partial mocking** - Maintains original functionality
+11. **Avoid type assertions** - Use factory patterns and satisfies operator instead
+12. **Use interface index types** - `vi.fn<Interface['method']>()` for perfect type matching
 
 ## Troubleshooting Test Failures
 
