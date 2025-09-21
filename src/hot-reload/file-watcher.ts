@@ -193,10 +193,18 @@ export class FileWatcher {
   private shouldWatchFile(filePath: string): boolean {
     // If we have glob patterns, use them
     if (this.filePatterns.length > 0) {
-      const matches = micromatch.isMatch(filePath, this.filePatterns);
+      // Convert absolute paths to relative for micromatch
+      // micromatch doesn't handle absolute paths well
+      const relativePath = path.relative(this.config.cwd, filePath);
+      const relativePatterns = this.filePatterns.map(pattern =>
+        path.relative(this.config.cwd, pattern)
+      );
+
+      const matches = micromatch.isMatch(relativePath, relativePatterns);
       log.error({
         filePath,
-        filePatterns: this.filePatterns,
+        relativePath,
+        relativePatterns,
         matches,
         platform: process.platform
       }, 'Checking file against patterns');
