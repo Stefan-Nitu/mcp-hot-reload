@@ -47,7 +47,11 @@ export class FileWatcher {
 
     const watchTargets = this.extractWatchTargets(this.normalizePatterns(this.config.patterns));
     if (!watchTargets.length) {
-      log.warn('No watch targets found');
+      log.warn({
+        patterns: this.config.patterns,
+        cwd: this.config.cwd,
+        normalizedPatterns: this.normalizePatterns(this.config.patterns)
+      }, 'No watch targets found');
       return;
     }
 
@@ -93,6 +97,12 @@ export class FileWatcher {
   }
 
   private handleChange(filePath: string): void {
+    log.debug({
+      filePath,
+      isAbsolute: path.isAbsolute(filePath),
+      cwd: this.config.cwd
+    }, 'handleChange called');
+
     if (!this.shouldWatchFile(filePath)) {
       log.trace({ filePath }, 'Ignoring file (not watched type)');
       return;
@@ -132,11 +142,32 @@ export class FileWatcher {
 
       if (this.isGlobPattern(absolutePath)) {
         this.filePatterns.push(absolutePath);
-        targets.add(this.extractDirFromGlob(absolutePath));
+        const baseDir = this.extractDirFromGlob(absolutePath);
+        targets.add(baseDir);
+        log.debug({
+          pattern,
+          absolutePath,
+          baseDir,
+          isGlob: true,
+          cwd: this.config.cwd
+        }, 'Processing glob pattern');
       } else {
         targets.add(absolutePath);
+        log.debug({
+          pattern,
+          absolutePath,
+          isGlob: false,
+          cwd: this.config.cwd
+        }, 'Processing direct path');
       }
     }
+
+    log.debug({
+      patterns,
+      filePatterns: this.filePatterns,
+      watchTargets: Array.from(targets),
+      cwd: this.config.cwd
+    }, 'Extracted watch targets');
 
     return Array.from(targets);
   }
@@ -160,12 +191,26 @@ export class FileWatcher {
   private shouldWatchFile(filePath: string): boolean {
     // If we have glob patterns, use them
     if (this.filePatterns.length > 0) {
-      return micromatch.isMatch(filePath, this.filePatterns);
+      const matches = micromatch.isMatch(filePath, this.filePatterns);
+      log.debug({
+        filePath,
+        filePatterns: this.filePatterns,
+        matches,
+        platform: process.platform
+      }, 'Checking file against patterns');
+      return matches;
     }
 
     // Otherwise, filter by common source extensions
     const ext = path.extname(filePath);
-    return this.config.extensions.includes(ext);
+    const matches = this.config.extensions.includes(ext);
+    log.debug({
+      filePath,
+      ext,
+      extensions: this.config.extensions,
+      matches
+    }, 'Checking file extension');
+    return matches;
   }
 
 }
