@@ -1,5 +1,19 @@
 #!/usr/bin/env node
 
+/**
+ * MCP Hot Reload - Entry point
+ *
+ * Architecture:
+ *   MCP Client (e.g., Claude, IDE) spawns this proxy
+ *   ↓
+ *   mcp-hot-reload (transparent proxy)
+ *   ↓
+ *   MCP Server (user's implementation)
+ *
+ * This proxy intercepts the communication, preserves sessions during
+ * server restarts, and handles automatic rebuilding on file changes.
+ */
+
 import { MCPProxy } from './mcp-proxy.js';
 import { ProxyConfig } from './types.js';
 import { existsSync, readFileSync, writeFileSync } from 'fs';

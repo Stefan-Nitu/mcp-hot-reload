@@ -1,36 +1,61 @@
 import { Readable, Writable } from 'stream';
-import { MessageRouter } from './message-router.js';
-import { ServerLifecycle } from './server-lifecycle.js';
-import { ProcessManager } from './process-manager.js';
-import { MessageQueue } from './message-queue.js';
-import { SessionTracker } from './session-tracker.js';
-import { BuildRunner } from './build-runner.js';
-import { FileWatcher } from './file-watcher.js';
-import { HotReload } from './hot-reload.js';
-import { ProxyConfig, JSONRPCMessage } from './types.js';
+import { MessageRouter } from './messaging/router.js';
+import { MessageQueue } from './messaging/queue.js';
+import { MessageParser } from './messaging/parser.js';
+import { SessionTracker } from './session/tracker.js';
+import { BuildRunner } from './hot-reload/build-runner.js';
+import { FileWatcher } from './hot-reload/file-watcher.js';
+import { HotReload } from './hot-reload/hot-reload.js';
+import { ProxyConfig } from './types.js';
 import { createLogger } from './utils/logger.js';
+import { McpServerLifecycle } from './process/lifecycle.js';
+import { ProcessSpawner } from './process/spawner.js';
+import { ProcessTerminator } from './process/terminator.js';
+import { ProcessReadinessChecker } from './process/readiness-checker.js';
 
 const log = createLogger('mcp-proxy');
 
+/**
+ * MCPProxy - Transparent proxy between MCP client and MCP server
+ *
+ * Architecture:
+ *   MCP Client (e.g., Claude) <-> MCPProxy (this) <-> MCP Server (user's implementation)
+ *
+ * Responsibilities:
+ * - Acts as transparent proxy forwarding messages between client and server
+ * - Preserves session state during server restarts
+ * - Manages server lifecycle (start, stop, restart)
+ * - Handles file watching and automatic rebuilds
+ * - Ensures clean shutdown on signals from client
+ */
 export class MCPProxy {
   private messageRouter: MessageRouter;
-  private serverLifecycle: ServerLifecycle;
+  private serverLifecycle: McpServerLifecycle;
   private hotReload: HotReload;
   private sessionTracker: SessionTracker;
   private config: Required<ProxyConfig>;
+  private signalHandler?: () => void;
+  private stdinEndHandler?: () => void;
+  private stdinCloseHandler?: () => void;
+  private handlersRegistered = false;
 
   constructor(
     config: ProxyConfig = {},
-    private stdin: Readable = process.stdin,
-    private stdout: Writable = process.stdout,
-    private stderr: Writable = process.stderr
+    private stdin: Readable = process.stdin,  // Input from MCP client
+    private stdout: Writable = process.stdout // Output to MCP client
   ) {
+    // Support both new names and deprecated aliases
+    const mcpServerCommand = config.mcpServerCommand || config.serverCommand || 'node';
+    const mcpServerArgs = config.mcpServerArgs || config.serverArgs || ['dist/index.js'];
+
     this.config = {
       buildCommand: config.buildCommand || 'npm run build',
       watchPattern: config.watchPattern || './src',
       debounceMs: config.debounceMs || 300,
-      serverCommand: config.serverCommand || 'node',
-      serverArgs: config.serverArgs || ['dist/index.js'],
+      mcpServerCommand,
+      mcpServerArgs,
+      serverCommand: mcpServerCommand,  // Keep for internal compatibility
+      serverArgs: mcpServerArgs,        // Keep for internal compatibility
       cwd: config.cwd || process.cwd(),
       env: config.env || {},
       onExit: config.onExit || ((code) => process.exit(code))
@@ -38,23 +63,36 @@ export class MCPProxy {
 
     log.debug({ config: this.config }, 'Configuration loaded');
 
-    // Setup message routing
+    // Setup message routing between MCP client and MCP server
     const messageQueue = new MessageQueue();
-    this.sessionTracker = new SessionTracker();
+    const messageParser = new MessageParser();
+    this.sessionTracker = new SessionTracker(messageParser);
     this.messageRouter = new MessageRouter(
-      this.stdin,
-      this.stdout,
+      this.stdin,   // From MCP client
+      this.stdout,  // To MCP client
       messageQueue,
       this.sessionTracker
     );
 
-    // Setup server lifecycle
-    const processManager = new ProcessManager();
-    this.serverLifecycle = new ServerLifecycle(
-      processManager,
+    // Setup server lifecycle with dependency injection
+    const spawner = new ProcessSpawner();
+    const readinessChecker = new ProcessReadinessChecker({
+      checkIntervalMs: 50,
+      timeoutMs: 2000,
+      settleDelayMs: 100
+    });
+    const restartTerminator = new ProcessTerminator({
+      closeStdin: false,
+      gracePeriodMs: 0,
+      forcePeriodMs: 100,
+      zombieTimeoutMs: 500,
+      throwOnZombie: true
+    });
+
+    this.serverLifecycle = new McpServerLifecycle(
       {
-        command: this.config.serverCommand,
-        args: this.config.serverArgs,
+        command: this.config.mcpServerCommand,
+        args: this.config.mcpServerArgs,
         cwd: this.config.cwd,
         env: {
           ...process.env,
@@ -62,23 +100,12 @@ export class MCPProxy {
           MCP_PROXY_INSTANCE: `mcp-proxy-${process.pid}-${Date.now()}`
         }
       },
-      {
-        onServerReady: (process) => {
-          // Connect message router to server
-          if (process.stdin && process.stdout) {
-            this.messageRouter.connectServer(process.stdin, process.stdout);
-          }
-        },
-        onServerExit: (code, signal) => {
-          log.error({ code, signal }, 'Server exited. Fix the code and save to restart.');
-          this.messageRouter.disconnectServer();
-        },
-        onShutdown: (exitCode) => {
-          // Skip cleanup and exit immediately - Claude only waits 250ms
-          this.config.onExit(exitCode);
-        }
-      }
+      readinessChecker,
+      restartTerminator,
+      spawner
     );
+
+    // Signal handlers will be setup in start() to avoid memory leaks
 
     // Setup hot reload
     if (!this.config.buildCommand || !this.config.buildCommand.trim()) {
@@ -91,15 +118,10 @@ export class MCPProxy {
     const fileWatcher = new FileWatcher({
       patterns: this.config.watchPattern,
       cwd: this.config.cwd,
-      debounceMs: 100,
-      onChange: () => this.hotReload.handleFileChange()
+      debounceMs: this.config.debounceMs
     });
 
-    this.hotReload = new HotReload(
-      buildRunner,
-      fileWatcher,
-      () => this.restartServer()
-    );
+    this.hotReload = new HotReload(buildRunner, fileWatcher);
   }
 
   public async start(): Promise<void> {
@@ -109,66 +131,153 @@ export class MCPProxy {
       return;
     }
 
-    // Start server
-    await this.serverLifecycle.start();
+    // Setup handlers only once to avoid memory leaks
+    if (!this.handlersRegistered) {
+      this.registerHandlers();
+      this.handlersRegistered = true;
+    }
 
-    // Start hot reload
+    // Start server and connect streams
+    const { stdin: serverStdin, stdout: serverStdout } = await this.serverLifecycle.start();
+    this.messageRouter.connectServer(serverStdin, serverStdout);
+
+    // Start hot reload file watching
     this.hotReload.start();
 
-    // Setup stdin closure handler
-    this.stdin.on('end', () => {
-      log.debug('Client disconnected (stdin closed)');
-      this.stop();
+    // Start the hot-reload loop in the background
+    this.startHotReloadLoop().catch(error => {
+      log.error({ err: error }, 'Hot-reload loop crashed');
+    });
+
+    this.stdin.on('error', (err) => {
+      log.error({ err }, 'stdin error - treating as disconnect');
+      process.exit(1);
     });
 
     // Keep stdin open
     this.stdin.resume();
 
-    // Enable signal handling
-    this.serverLifecycle.enableSignalHandling();
+    // Signal handlers are already set up above
   }
 
-  private async restartServer(): Promise<void> {
-    const wasInitialized = this.sessionTracker.isInitialized();
-    const initRequest = this.sessionTracker.getInitializeRequest();
+  private restartInProgress = false;
 
-    // Restart server
-    const process = await this.serverLifecycle.restart();
-
-    // Reconnect message router
-    if (process.stdin && process.stdout) {
-      this.messageRouter.connectServer(process.stdin, process.stdout);
-    }
-
-    // Re-send initialize if needed
-    if (initRequest && process.stdin?.writable) {
-      log.info('Re-sending cached initialize request during restart');
-      process.stdin.write(initRequest);
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-
-    // Send tools changed notification if session was initialized
-    if (wasInitialized && this.stdout.writable && !(this.stdout as any).destroyed) {
-      const notification: JSONRPCMessage = {
-        jsonrpc: '2.0',
-        method: 'notifications/tools/list_changed'
-      };
+  /**
+   * Hot-reload loop that watches for file changes and rebuilds/restarts.
+   * Ensures no overlapping restarts.
+   */
+  private async startHotReloadLoop(): Promise<void> {
+    while (true) {
       try {
-        this.stdout.write(JSON.stringify(notification) + '\n');
+        // Wait for file changes
+        const changedFiles = await this.hotReload.waitForChange();
+        log.debug({ files: changedFiles }, 'Files changed');
+
+        // Prevent overlapping restarts
+        if (this.restartInProgress) {
+          log.debug('Restart already in progress, skipping');
+          continue;
+        }
+
+        this.restartInProgress = true;
+
+        try {
+          // Build on change
+          const buildSuccess = await this.hotReload.buildOnChange();
+
+          if (buildSuccess) {
+            log.info('Build succeeded, restarting server');
+
+            // Disconnect old streams
+            this.messageRouter.disconnectServer();
+
+            // Restart server and get new streams
+            const { stdin: serverStdin, stdout: serverStdout } = await this.serverLifecycle.restart();
+
+            // Connect new streams
+            this.messageRouter.connectServer(serverStdin, serverStdout);
+
+            // If we have a stored initialize request, re-send it to restore session
+            const initRequest = this.sessionTracker.getInitializeRequest();
+            if (initRequest && serverStdin.writable) {
+              log.info('Re-sending initialize request after restart');
+              try {
+                serverStdin.write(initRequest);
+              } catch (error) {
+                log.error({ err: error }, 'Failed to re-send initialize request');
+              }
+            }
+
+            // Send tools changed notification if session was initialized
+            const wasInitialized = this.sessionTracker.isInitialized();
+            if (wasInitialized && this.stdout.writable && !(this.stdout as any).destroyed) {
+              const notification = {
+                jsonrpc: '2.0',
+                method: 'notifications/tools/list_changed'
+              };
+              try {
+                this.stdout.write(JSON.stringify(notification) + '\n');
+              } catch (error) {
+                log.debug('Failed to send tools changed notification');
+              }
+            }
+          } else {
+            log.error('Build failed, waiting for next change');
+          }
+        } finally {
+          this.restartInProgress = false;
+        }
       } catch (error) {
-        log.debug('Failed to send tools changed notification');
+        log.error({ err: error }, 'Error in hot-reload loop');
+        // Continue the loop even on errors
       }
     }
   }
 
-  public async stop(): Promise<void> {
-    await this.serverLifecycle.stop();
-    this.cleanup();
+  private registerHandlers(): void {
+    // Create a truly "once" handler using closure
+    const once = <T extends (...args: any[]) => void>(fn: T): T => {
+      let called = false;
+      return ((...args: any[]) => {
+        if (!called) {
+          called = true;
+          return fn(...args);
+        }
+      }) as T;
+    };
+
+    // Single exit handler that will only run once across all events
+    const exitHandler = once(() => {
+      // Exit IMMEDIATELY - no async operations, no cleanup
+      // The OS will clean up child processes automatically
+      process.exit(0);
+    });
+
+    // Register the once-wrapped handler for all shutdown signals
+    process.on('SIGINT', exitHandler);
+    process.on('SIGTERM', exitHandler);
+    this.stdin.on('end', exitHandler);
+    this.stdin.on('close', exitHandler);
+
+    // Store references for cleanup
+    this.signalHandler = exitHandler;
+    this.stdinEndHandler = exitHandler;
+    this.stdinCloseHandler = exitHandler;
   }
 
-  private cleanup(): void {
-    this.hotReload.stop();
-    this.messageRouter.stop();
-    this.serverLifecycle.disableSignalHandling();
+  public cleanup(): void {
+    // Remove event listeners to prevent memory leaks
+    if (this.signalHandler) {
+      process.off('SIGINT', this.signalHandler);
+      process.off('SIGTERM', this.signalHandler);
+    }
+    if (this.stdinEndHandler) {
+      this.stdin.off('end', this.stdinEndHandler);
+    }
+    if (this.stdinCloseHandler) {
+      this.stdin.off('close', this.stdinCloseHandler);
+    }
+    this.handlersRegistered = false;
   }
+
 }

@@ -530,13 +530,19 @@ npm run clean
 
 The project includes comprehensive test coverage:
 
-- **Unit tests**: Core functionality testing
-- **Integration tests**: Component interaction testing
-- **E2E tests**: Full MCP protocol flow testing
+- **Unit tests**: Core functionality testing (run in parallel)
+- **Integration tests**: Component interaction testing (run sequentially)
+- **E2E tests**: Full MCP protocol flow testing (run sequentially)
 
 ```bash
 # Run all tests
 npm test
+
+# Run unit tests only (fast, parallel)
+npm run test:unit
+
+# Run integration and E2E tests only (sequential)
+npm run test:e2e
 
 # Run specific test suite
 npm test -- message-parser

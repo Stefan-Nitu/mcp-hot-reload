@@ -17,23 +17,28 @@ This means you can test changes immediately through the MCP tools without runnin
 
 ### Required Documents (READ NOW IN THIS ORDER):
 1. `docs/TESTING.md` - MCP server testing strategies with Vitest
+2. `docs/DEVELOPMENT-NOTES.md` - Critical lessons learned and known issues
 
 ### Verification Checklist:
 - [ ] I have read `docs/TESTING.md` completely
+- [ ] I have read `docs/DEVELOPMENT-NOTES.md` completely
 - [ ] I understand the testing approach (unit/integration/E2E separation, Vitest patterns)
 - [ ] I understand test file naming (*.unit.test.ts, *.integration.test.ts, *.e2e.test.ts)
 - [ ] I understand STDIO compliance (never write to stdout, always use stderr for logs)
 - [ ] I understand protocol compliance testing requirements
+- [ ] I understand stale build artifacts issue and prevention (`npm run clean`)
+- [ ] I understand signal handling requirements (immediate exit, no async cleanup)
+- [ ] I understand process cleanup patterns in E2E tests
 
 If you haven't read these documents yet, STOP and read them now using the Read tool.
-Only after reading the document should you proceed to help the user.
+Only after reading the documents should you proceed to help the user.
 
 ## Critical MCP Server Requirements
 
 ### Logging
 - **NEVER write to stdout** - This breaks the JSON-RPC protocol
-- **ALWAYS use stderr** for logging (via `console.error` or Pino configured for stderr)
-- Use Pino with stderr stream for all logging
+- **ALWAYS use stderr** for logging (Pino configured for stderr)
+- Use the logger via `createLogger()` for structured logging
 
 ### Error Handling
 - **Tools return errors in content**, never throw JSON-RPC errors

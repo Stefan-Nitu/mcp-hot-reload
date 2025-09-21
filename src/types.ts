@@ -11,50 +11,23 @@ export interface JSONRPCMessage {
   };
 }
 
-export interface MCPInitializeRequest extends JSONRPCMessage {
-  method: 'initialize';
-  params: {
-    protocolVersion: string;
-    capabilities?: {
-      tools?: {};
-      resources?: {};
-      prompts?: {};
-    };
-    clientInfo?: {
-      name: string;
-      version: string;
-    };
-  };
-}
-
-export interface MCPInitializeResponse extends JSONRPCMessage {
-  result: {
-    protocolVersion: string;
-    capabilities?: {
-      tools?: {};
-      resources?: {};
-      prompts?: {};
-    };
-    serverInfo: {
-      name: string;
-      version: string;
-    };
-  };
-}
-
+/**
+ * Configuration for the MCP Proxy
+ *
+ * The proxy sits between:
+ *   MCP Client (e.g., Claude, IDE) <-> MCPProxy <-> MCP Server (user's implementation)
+ */
 export interface ProxyConfig {
-  buildCommand?: string;
-  watchPattern?: string | string[];
-  debounceMs?: number;
+  buildCommand?: string;           // Command to build the MCP server
+  watchPattern?: string | string[]; // Files to watch for changes
+  debounceMs?: number;              // Debounce time before restarting MCP server
+  mcpServerCommand?: string;        // Command to start the MCP server
+  mcpServerArgs?: string[];         // Arguments for the MCP server command
+  cwd?: string;                     // Working directory for the MCP server
+  env?: Record<string, string>;     // Environment variables for the MCP server
+  onExit?: (code: number) => void;  // Called when proxy exits (injected for testing)
+
+  // Deprecated aliases for backward compatibility
   serverCommand?: string;
   serverArgs?: string[];
-  cwd?: string;
-  env?: Record<string, string>;
-  onExit?: (code: number) => void;  // Allow injection of exit behavior
-}
-
-export interface MessageBuffer {
-  message: JSONRPCMessage;
-  timestamp: number;
-  raw: string;
 }

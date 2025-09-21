@@ -7,3 +7,4 @@ coverage/
 test-server-tmp/
 claude-config-snippet.md
 .claude/
+.vscode/
