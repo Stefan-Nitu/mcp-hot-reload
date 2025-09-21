@@ -177,7 +177,7 @@ export class FileWatcher {
   }
 
   private extractDirFromGlob(globPath: string): string {
-    const parts = globPath.split('/');
+    const parts = globPath.split(path.sep);
     const nonGlobParts: string[] = [];
 
     for (const part of parts) {
@@ -185,7 +185,7 @@ export class FileWatcher {
       nonGlobParts.push(part);
     }
 
-    return nonGlobParts.length ? nonGlobParts.join('/') : path.dirname(globPath);
+    return nonGlobParts.length ? nonGlobParts.join(path.sep) : path.dirname(globPath);
   }
 
   private shouldWatchFile(filePath: string): boolean {
