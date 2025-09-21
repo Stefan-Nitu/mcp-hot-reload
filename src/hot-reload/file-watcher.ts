@@ -140,16 +140,12 @@ export class FileWatcher {
         ? pattern
         : path.join(this.config.cwd, pattern);
 
-      if (this.isGlobPattern(pattern)) {
-        // Store the original pattern for micromatch (remove leading ./)
-        const cleanPattern = pattern.replace(/^\.\//, '');
-        this.filePatterns.push(cleanPattern);
-
+      if (this.isGlobPattern(absolutePath)) {
+        this.filePatterns.push(absolutePath);
         const baseDir = this.extractDirFromGlob(absolutePath);
         targets.add(baseDir);
         log.error({
           pattern,
-          cleanPattern,
           absolutePath,
           baseDir,
           isGlob: true,
@@ -197,14 +193,9 @@ export class FileWatcher {
   private shouldWatchFile(filePath: string): boolean {
     // If we have glob patterns, use them
     if (this.filePatterns.length > 0) {
-      // Convert absolute file path to relative for micromatch
-      const relativePath = path.relative(this.config.cwd, filePath);
-
-      // filePatterns are already in the correct relative format
-      const matches = micromatch.isMatch(relativePath, this.filePatterns);
+      const matches = micromatch.isMatch(filePath, this.filePatterns);
       log.error({
         filePath,
-        relativePath,
         filePatterns: this.filePatterns,
         matches,
         platform: process.platform

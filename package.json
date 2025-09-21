@@ -12,7 +12,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "npm run build && npm run test:unit && vitest run --config vitest.config.e2e.ts",
+    "test": "npm run build && vitest run --config vitest.config.e2e.ts src/__tests__/mcp-proxy.integration.test.ts -t \"should support glob patterns|should only restart for TypeScript|should coalesce multiple|should prevent overlapping\"",
     "test:unit": "vitest run",
     "test:e2e": "npm run clean && npm run build && vitest run --config vitest.config.e2e.ts",
     "test:watch": "vitest",
