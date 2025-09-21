@@ -97,7 +97,7 @@ export class FileWatcher {
   }
 
   private handleChange(filePath: string): void {
-    log.debug({
+    log.error({
       filePath,
       isAbsolute: path.isAbsolute(filePath),
       cwd: this.config.cwd
@@ -144,7 +144,7 @@ export class FileWatcher {
         this.filePatterns.push(absolutePath);
         const baseDir = this.extractDirFromGlob(absolutePath);
         targets.add(baseDir);
-        log.debug({
+        log.error({
           pattern,
           absolutePath,
           baseDir,
@@ -153,7 +153,7 @@ export class FileWatcher {
         }, 'Processing glob pattern');
       } else {
         targets.add(absolutePath);
-        log.debug({
+        log.error({
           pattern,
           absolutePath,
           isGlob: false,
@@ -162,11 +162,13 @@ export class FileWatcher {
       }
     }
 
-    log.debug({
+    log.error({
       patterns,
       filePatterns: this.filePatterns,
       watchTargets: Array.from(targets),
-      cwd: this.config.cwd
+      cwd: this.config.cwd,
+      platform: process.platform,
+      pathSep: path.sep
     }, 'Extracted watch targets');
 
     return Array.from(targets);
@@ -192,7 +194,7 @@ export class FileWatcher {
     // If we have glob patterns, use them
     if (this.filePatterns.length > 0) {
       const matches = micromatch.isMatch(filePath, this.filePatterns);
-      log.debug({
+      log.error({
         filePath,
         filePatterns: this.filePatterns,
         matches,
