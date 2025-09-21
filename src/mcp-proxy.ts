@@ -149,9 +149,6 @@ export class MCPProxy {
       process.exit(1);
     });
 
-    // Keep stdin open
-    this.stdin.resume();
-
     // Signal handlers are already set up above
   }
 
@@ -230,9 +227,8 @@ export class MCPProxy {
   }
 
   private registerHandlers(): void {
-    // Ensure stdin is in flowing mode so end events are emitted
-    // This is critical for detecting when stdin is closed
-    this.stdin.resume();
+    // DO NOT call stdin.resume() here!
+    // MessageRouter already handles this when it attaches the 'data' listener
 
     // Create a truly "once" handler using closure
     const once = <T extends (...args: any[]) => void>(fn: T): T => {
