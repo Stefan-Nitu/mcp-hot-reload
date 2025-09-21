@@ -45,35 +45,13 @@ export class FileWatcher {
       return; // Already watching
     }
 
-    const patterns = this.normalizePatterns(this.config.patterns);
-    const watchTargets = new Set<string>();
-    this.filePatterns = [];
-
-    // Process each pattern to extract watch targets and file patterns
-    for (const pattern of patterns) {
-      const absolutePath = path.isAbsolute(pattern)
-        ? pattern
-        : path.join(this.config.cwd, pattern);
-
-      if (this.isGlobPattern(absolutePath)) {
-        // Store the pattern as-is for later matching
-        this.filePatterns.push(pattern);
-        // Extract base directory to watch
-        const baseDir = this.extractBaseDir(absolutePath);
-        watchTargets.add(baseDir);
-      } else {
-        // Direct path, watch as-is
-        watchTargets.add(absolutePath);
-      }
-    }
-
-    const watchPaths = Array.from(watchTargets);
-    if (!watchPaths.length) {
+    const watchTargets = this.extractWatchTargets(this.normalizePatterns(this.config.patterns));
+    if (!watchTargets.length) {
       log.warn('No watch targets found');
       return;
     }
 
-    this.watcher = chokidar.watch(watchPaths, {
+    this.watcher = chokidar.watch(watchTargets, {
       persistent: true,
       ignoreInitial: true,
       ignored: ['**/node_modules/**', '**/.git/**', '**/dist/**', '**/.vscode/**']
@@ -84,7 +62,7 @@ export class FileWatcher {
     this.watcher.on('unlink', (filePath) => this.handleChange(filePath));
     this.watcher.on('error', (error) => log.error({ err: error }, 'Watcher error'));
 
-    log.debug({ paths: watchPaths, patterns: this.filePatterns }, 'Started watching');
+    log.debug({ targets: watchTargets }, 'Started watching');
   }
 
   stop(): void {
@@ -115,7 +93,6 @@ export class FileWatcher {
   }
 
   private handleChange(filePath: string): void {
-    // Check if we should watch this file
     if (!this.shouldWatchFile(filePath)) {
       log.trace({ filePath }, 'Ignoring file (not watched type)');
       return;
@@ -144,52 +121,46 @@ export class FileWatcher {
     return Array.isArray(patterns) ? patterns : [patterns];
   }
 
-  private isGlobPattern(pattern: string): boolean {
-    return pattern.includes('*') || pattern.includes('?') || pattern.includes('[') || pattern.includes('{');
-  }
+  private extractWatchTargets(patterns: string[]): string[] {
+    const targets = new Set<string>();
+    this.filePatterns = [];
 
-  private extractBaseDir(globPath: string): string {
-    // Find the first directory before any glob characters
-    const parts = globPath.split(path.sep);
-    const baseParts: string[] = [];
+    for (const pattern of patterns) {
+      const absolutePath = path.isAbsolute(pattern)
+        ? pattern
+        : path.join(this.config.cwd, pattern);
 
-    for (const part of parts) {
-      if (this.isGlobPattern(part)) {
-        break;
+      if (this.isGlobPattern(absolutePath)) {
+        this.filePatterns.push(absolutePath);
+        targets.add(this.extractDirFromGlob(absolutePath));
+      } else {
+        targets.add(absolutePath);
       }
-      baseParts.push(part);
     }
 
-    // Return the base directory path
-    const baseDir = baseParts.join(path.sep);
-    return baseDir || path.dirname(globPath);
+    return Array.from(targets);
+  }
+
+  private isGlobPattern(pattern: string): boolean {
+    return pattern.includes('*') || pattern.includes('?');
+  }
+
+  private extractDirFromGlob(globPath: string): string {
+    const parts = globPath.split('/');
+    const nonGlobParts: string[] = [];
+
+    for (const part of parts) {
+      if (this.isGlobPattern(part)) break;
+      nonGlobParts.push(part);
+    }
+
+    return nonGlobParts.length ? nonGlobParts.join('/') : path.dirname(globPath);
   }
 
   private shouldWatchFile(filePath: string): boolean {
     // If we have glob patterns, use them
     if (this.filePatterns.length > 0) {
-      // Convert absolute path to relative for matching
-      const relativePath = path.isAbsolute(filePath)
-        ? path.relative(this.config.cwd, filePath)
-        : filePath;
-
-      // Normalize to use forward slashes for glob matching
-      const normalizedPath = relativePath.replace(/\\/g, '/');
-
-      // Also try with ./ prefix as patterns may use it
-      const pathsToTry = [normalizedPath, `./${normalizedPath}`];
-
-      const matches = pathsToTry.some(p => micromatch.isMatch(p, this.filePatterns));
-
-      log.debug({
-        filePath,
-        relativePath: normalizedPath,
-        patterns: this.filePatterns,
-        matches,
-        cwd: this.config.cwd
-      }, 'Glob pattern matching');
-
-      return matches;
+      return micromatch.isMatch(filePath, this.filePatterns);
     }
 
     // Otherwise, filter by common source extensions
