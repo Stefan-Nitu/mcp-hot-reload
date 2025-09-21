@@ -18,7 +18,7 @@ export class FileWatcher {
   private debounceTimer: NodeJS.Timeout | null = null;
   private changeQueue: Array<() => void> = [];
   private pendingFiles = new Set<string>();
-  private globPatterns: string[] = [];
+  private filePatterns: string[] = [];
 
   constructor(config: FileWatcherConfig) {
     this.config = {
@@ -47,19 +47,20 @@ export class FileWatcher {
 
     const patterns = this.normalizePatterns(this.config.patterns);
     const watchTargets = new Set<string>();
-    this.globPatterns = [];
+    this.filePatterns = [];
 
-    // Process each pattern to extract watch targets and glob patterns
+    // Process each pattern to extract watch targets and file patterns
     for (const pattern of patterns) {
       const absolutePath = path.isAbsolute(pattern)
         ? pattern
         : path.join(this.config.cwd, pattern);
 
       if (this.isGlobPattern(absolutePath)) {
-        // Store the glob pattern for filtering
-        this.globPatterns.push(absolutePath);
+        // Store the pattern as-is for later matching
+        this.filePatterns.push(pattern);
         // Extract base directory to watch
-        watchTargets.add(this.extractBaseDir(absolutePath));
+        const baseDir = this.extractBaseDir(absolutePath);
+        watchTargets.add(baseDir);
       } else {
         // Direct path, watch as-is
         watchTargets.add(absolutePath);
@@ -83,7 +84,7 @@ export class FileWatcher {
     this.watcher.on('unlink', (filePath) => this.handleChange(filePath));
     this.watcher.on('error', (error) => log.error({ err: error }, 'Watcher error'));
 
-    log.debug({ paths: watchPaths, globs: this.globPatterns }, 'Started watching');
+    log.debug({ paths: watchPaths, patterns: this.filePatterns }, 'Started watching');
   }
 
   stop(): void {
@@ -114,44 +115,23 @@ export class FileWatcher {
   }
 
   private handleChange(filePath: string): void {
+    // Check if we should watch this file
+    if (!this.shouldWatchFile(filePath)) {
+      log.trace({ filePath }, 'Ignoring file (not watched type)');
+      return;
+    }
+
     log.debug({ filePath }, 'File change detected');
-    let isValid = false;
+    this.pendingFiles.add(filePath);
 
-    // If we have glob patterns, check if the file matches any of them
-    if (this.globPatterns.length > 0) {
-      const absolutePath = path.isAbsolute(filePath)
-        ? filePath
-        : path.join(this.config.cwd, filePath);
-
-      if (micromatch.isMatch(absolutePath, this.globPatterns)) {
-        isValid = true;
-        log.debug({ filePath, absolutePath }, 'File matches glob pattern');
-      } else {
-        log.debug({ filePath, absolutePath, patterns: this.globPatterns }, 'File does not match glob patterns');
-      }
-    } else {
-      // No glob patterns, filter by extension
-      const ext = path.extname(filePath);
-      if (this.config.extensions.includes(ext)) {
-        isValid = true;
-      } else {
-        log.trace({ filePath }, 'Ignoring file (not watched extension)');
-      }
+    // Trigger debounce timer
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
     }
 
-    if (isValid) {
-      log.debug({ filePath }, 'File change detected');
-      this.pendingFiles.add(filePath);
-
-      // Only trigger debounce timer for valid files
-      if (this.debounceTimer) {
-        clearTimeout(this.debounceTimer);
-      }
-
-      this.debounceTimer = setTimeout(() => {
-        this.notifyChanges();
-      }, this.config.debounceMs);
-    }
+    this.debounceTimer = setTimeout(() => {
+      this.notifyChanges();
+    }, this.config.debounceMs);
   }
 
   private notifyChanges(): void {
@@ -183,6 +163,38 @@ export class FileWatcher {
     // Return the base directory path
     const baseDir = baseParts.join(path.sep);
     return baseDir || path.dirname(globPath);
+  }
+
+  private shouldWatchFile(filePath: string): boolean {
+    // If we have glob patterns, use them
+    if (this.filePatterns.length > 0) {
+      // Convert absolute path to relative for matching
+      const relativePath = path.isAbsolute(filePath)
+        ? path.relative(this.config.cwd, filePath)
+        : filePath;
+
+      // Normalize to use forward slashes for glob matching
+      const normalizedPath = relativePath.replace(/\\/g, '/');
+
+      // Also try with ./ prefix as patterns may use it
+      const pathsToTry = [normalizedPath, `./${normalizedPath}`];
+
+      const matches = pathsToTry.some(p => micromatch.isMatch(p, this.filePatterns));
+
+      log.debug({
+        filePath,
+        relativePath: normalizedPath,
+        patterns: this.filePatterns,
+        matches,
+        cwd: this.config.cwd
+      }, 'Glob pattern matching');
+
+      return matches;
+    }
+
+    // Otherwise, filter by common source extensions
+    const ext = path.extname(filePath);
+    return this.config.extensions.includes(ext);
   }
 
 }

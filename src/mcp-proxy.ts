@@ -27,6 +27,9 @@ const log = createLogger('mcp-proxy');
  * - Manages server lifecycle (start, stop, restart)
  * - Handles file watching and automatic rebuilds
  * - Ensures clean shutdown on signals from client
+ * 
+ * Note:
+ * - DO NOT call stdin.resume() here! MessageRouter already handles this when it attaches the 'data' listener
  */
 export class MCPProxy {
   private messageRouter: MessageRouter;
@@ -227,9 +230,6 @@ export class MCPProxy {
   }
 
   private registerHandlers(): void {
-    // DO NOT call stdin.resume() here!
-    // MessageRouter already handles this when it attaches the 'data' listener
-
     // Create a truly "once" handler using closure
     const once = <T extends (...args: any[]) => void>(fn: T): T => {
       let called = false;
