@@ -64,6 +64,27 @@ export async function cleanupProxyProcess(proxy: ChildProcess | null): Promise<b
   if (result === 'timeout' && !proxy.killed) {
     const pid = proxy.pid;
 
+    // Double-check if process is actually still running
+    // Sometimes the exit event doesn't fire even though the process died
+    let isActuallyRunning = false;
+    if (pid) {
+      try {
+        // kill with signal 0 just checks if process exists
+        process.kill(pid, 0);
+        isActuallyRunning = true;
+      } catch {
+        // Process doesn't exist - it already exited
+        isActuallyRunning = false;
+      }
+    }
+
+    if (!isActuallyRunning) {
+      // Process already dead, no memory leak
+      console.error(`[CLEANUP] Process PID ${pid} already exited (exit event was delayed)`);
+      await cleanupChildProcesses(childPids);
+      return true;
+    }
+
     // Log potential memory leak for debugging
     console.error(`⚠️  MEMORY LEAK DETECTED: Proxy PID ${pid} did not exit after stdin closed!`);
     console.error('This may indicate:');

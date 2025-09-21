@@ -152,6 +152,12 @@ if (args.length > 0) {
   }
 }
 
+// Setup stdin end handler at the top level for reliability
+// This ensures the process exits when stdin is closed
+process.stdin.on('end', () => {
+  process.exit(0);
+});
+
 const proxy = new MCPProxy(config);
 proxy.start().catch(error => {
   log.error({ err: error }, 'Failed to start proxy');

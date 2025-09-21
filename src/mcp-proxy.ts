@@ -37,7 +37,6 @@ export class MCPProxy {
   private signalHandler?: () => void;
   private stdinEndHandler?: () => void;
   private stdinCloseHandler?: () => void;
-  private handlersRegistered = false;
 
   constructor(
     config: ProxyConfig = {},
@@ -105,7 +104,9 @@ export class MCPProxy {
       spawner
     );
 
-    // Signal handlers will be setup in start() to avoid memory leaks
+    // Register signal handlers immediately in constructor to ensure they're always active
+    // This is critical for proper cleanup even if start() is skipped
+    this.registerHandlers();
 
     // Setup hot reload
     if (!this.config.buildCommand || !this.config.buildCommand.trim()) {
@@ -129,12 +130,6 @@ export class MCPProxy {
     if (process.env.MCP_PROXY_INSTANCE) {
       log.info('Skipping start - already running as child of proxy');
       return;
-    }
-
-    // Setup handlers only once to avoid memory leaks
-    if (!this.handlersRegistered) {
-      this.registerHandlers();
-      this.handlersRegistered = true;
     }
 
     // Start server and connect streams
@@ -235,6 +230,10 @@ export class MCPProxy {
   }
 
   private registerHandlers(): void {
+    // Ensure stdin is in flowing mode so end events are emitted
+    // This is critical for detecting when stdin is closed
+    this.stdin.resume();
+
     // Create a truly "once" handler using closure
     const once = <T extends (...args: any[]) => void>(fn: T): T => {
       let called = false;
@@ -277,7 +276,6 @@ export class MCPProxy {
     if (this.stdinCloseHandler) {
       this.stdin.off('close', this.stdinCloseHandler);
     }
-    this.handlersRegistered = false;
   }
 
 }
