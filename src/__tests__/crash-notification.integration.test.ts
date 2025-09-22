@@ -116,7 +116,7 @@ describe('Crash Notification Integration', () => {
     const errorResponse = messages.find(msg => msg.id === 2 && msg.error);
     expect(errorResponse).toBeDefined();
     expect(errorResponse.error.code).toBe(-32603); // Internal error
-    expect(errorResponse.error.message).toContain('crashed');
+    expect(errorResponse.error.message).toContain('terminated unexpectedly');
     expect(errorResponse.error.message).toContain('exit code 42');
     expect(errorResponse.error.data.method).toBe('crashme');
   });
@@ -176,7 +176,7 @@ describe('Crash Notification Integration', () => {
 
     const errorResponse = messages.find(msg => msg.id === 1 && msg.error);
     expect(errorResponse).toBeDefined();
-    expect(errorResponse.error.message).toContain('crashed');
+    expect(errorResponse.error.message).toContain('terminated unexpectedly');
     expect(errorResponse.error.message).toContain('exit code 99');
     expect(errorResponse.error.data.method).toBe('initialize');
   });
