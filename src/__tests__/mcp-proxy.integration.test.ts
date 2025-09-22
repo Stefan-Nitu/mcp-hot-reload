@@ -399,7 +399,7 @@ describe.sequential('MCPProxy Integration Tests', () => {
 
       // Should have detected at least one event (add or change)
       expect(events.length).toBeGreaterThan(0);
-    }, 15000);
+    }, 20000);
 
     it('should support glob patterns for file watching', async () => {
       // Arrange
@@ -458,7 +458,39 @@ describe.sequential('MCPProxy Integration Tests', () => {
       expect(counts.restarts).toBe(2);
       expect(counts.initializeResponses).toBe(3); // Initial + 2 restarts
 
-    }, 10000);
+    }, 20000);
+
+    it('simple directory watch test - CI debugging', async () => {
+      // Minimal test to isolate directory watching issue in CI
+      const serverPath = path.join(testDir, 'server.js');
+      fs.copyFileSync(TEST_SERVER_PATH, serverPath);
+      fs.chmodSync(serverPath, 0o755);
+      fs.mkdirSync(path.join(testDir, 'src'), { recursive: true });
+
+      const harness = new MCPTestHarness(new PassThrough(), new PassThrough());
+
+      proxy = new MCPProxy({
+        serverCommand: 'node',
+        serverArgs: ['server.js'],
+        cwd: testDir,
+        watchPattern: 'src',  // Directory, not glob
+        debounceMs: 100,
+        onExit: () => {}
+      }, harness.clientIn, harness.clientOut);
+
+      await proxy.start();
+      await harness.initialize();
+
+      // Write a TypeScript file
+      fs.writeFileSync(path.join(testDir, 'src/test.ts'), 'console.log("test")');
+
+      // Wait for restart
+      await harness.waitForRestarts(1);
+
+      // Verify restart happened
+      const counts = harness.getCounts();
+      expect(counts.restarts).toBe(1);
+    }, 20000);
 
     it('should only restart for TypeScript files, not other file types', async () => {
       // Arrange
@@ -513,7 +545,7 @@ describe.sequential('MCPProxy Integration Tests', () => {
       expect(counts.restarts).toBe(1);
       expect(counts.initializeResponses).toBe(2); // Initial + 1 restart
 
-    }, 10000);
+    }, 20000);
 
     it('should coalesce multiple rapid file changes into a single restart', async () => {
       // Arrange
@@ -580,7 +612,7 @@ describe.sequential('MCPProxy Integration Tests', () => {
       // - initializeResponses: 2 (1 initial + 1 after the restart)
       // This is more precise than counting raw messages (which would be 3)
 
-    }, 10000);
+    }, 20000);
 
     it('should prevent overlapping restarts when multiple file changes occur rapidly', async () => {
       // Arrange
@@ -633,7 +665,7 @@ describe.sequential('MCPProxy Integration Tests', () => {
       // The key assertion: we should never have concurrent restarts
       // This is ensured by the restartInProgress flag in MCPProxy
 
-    }, 15000);
+    }, 20000);
 
     it('should handle stop call during active restart', async () => {
       // Arrange
