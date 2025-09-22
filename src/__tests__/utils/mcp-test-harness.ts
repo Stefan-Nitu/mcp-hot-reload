@@ -40,6 +40,7 @@ export class MCPTestHarness {
           // Track notification messages - this is the clear signal of a restart
           if (msg.method === 'notifications/tools/list_changed') {
             this.restartCount++;
+            console.error('[HARNESS] Detected restart notification, count:', this.restartCount);
           }
         } catch (e) {
           // Not JSON, ignore

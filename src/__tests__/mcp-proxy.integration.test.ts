@@ -6,31 +6,34 @@ import * as path from 'path';
 import chokidar from 'chokidar';
 import fixtures from './fixtures/test-fixtures.js';
 import { MCPTestHarness } from './utils/mcp-test-harness.js';
+import { cleanupTestDirectory } from './utils/process-cleanup.js';
+import { createTestDirectory } from './utils/test-directory.js';
 
 const TEST_SERVER_PATH = fixtures.TEST_SERVERS.ALL_CONTENT_TYPES;
 
 describe.sequential('MCPProxy Integration Tests', () => {
-  const testDir = path.join(fixtures.PROJECT_ROOT, 'test-server-tmp');
+  let testDir: string;
   let proxy: MCPProxy | null = null;
+  let testHarness: MCPTestHarness | null = null;
 
   beforeEach(() => {
-    // Create test server directory
-    if (!fs.existsSync(testDir)) {
-      fs.mkdirSync(testDir, { recursive: true });
-    }
+    // Create unique test directory for each test
+    testDir = createTestDirectory('mcp-proxy-test');
   });
 
   afterEach(async () => {
-    // Cleanup - just clear references, let garbage collection handle the rest
+    // Clean up proxy
     if (proxy) {
       proxy.cleanup();
     }
     proxy = null;
+    testHarness = null;
+
     // Clean up environment variables that might affect subsequent tests
     delete process.env.MCP_PROXY_INSTANCE;
-    if (fs.existsSync(testDir)) {
-      fs.rmSync(testDir, { recursive: true });
-    }
+
+    // Clean up test directory
+    cleanupTestDirectory(testDir);
   });
 
   describe('MCP Content Types', () => {
@@ -409,24 +412,25 @@ describe.sequential('MCPProxy Integration Tests', () => {
       fs.mkdirSync(path.join(testDir, 'src'), { recursive: true });
       fs.mkdirSync(path.join(testDir, 'lib'), { recursive: true });
 
-      const harness = new MCPTestHarness(new PassThrough(), new PassThrough());
+      testHarness = new MCPTestHarness(new PassThrough(), new PassThrough());
 
       proxy = new MCPProxy({
         serverCommand: 'node',
         serverArgs: ['server.js'],
         cwd: testDir,
+        buildCommand: 'echo "Build done" >&2',
         watchPattern: ['./src/**/*.py', './lib/**/*.js'],
         debounceMs: 100,
         onExit: () => {}
-      }, harness.clientIn, harness.clientOut);
+      }, testHarness.clientIn, testHarness.clientOut);
 
       await proxy.start();
 
       // Initialize and wait for server to be ready
-      await harness.initialize();
+      await testHarness.initialize();
 
       // Verify initial state
-      let counts = harness.getCounts();
+      let counts = testHarness.getCounts();
       expect(counts.initializeResponses).toBe(1);
       expect(counts.restarts).toBe(0);
 
@@ -436,16 +440,16 @@ describe.sequential('MCPProxy Integration Tests', () => {
       fs.writeFileSync(path.join(testDir, 'src/index.ts'), 'process.stderr.write("ts\\n")');
 
       // Wait and verify no restart happened
-      await harness.expectNoMoreRestarts(0, 500);
-      counts = harness.getCounts();
+      await testHarness.expectNoMoreRestarts(0, 500);
+      counts = testHarness.getCounts();
       expect(counts.restarts).toBe(0); // No restart
 
       // Python files in src SHOULD trigger
       fs.writeFileSync(path.join(testDir, 'src/main.py'), 'print("hello")');
 
       // Wait for restart to complete
-      await harness.waitForRestarts(1);
-      counts = harness.getCounts();
+      await testHarness.waitForRestarts(1);
+      counts = testHarness.getCounts();
       expect(counts.restarts).toBe(1);
       expect(counts.initializeResponses).toBe(2); // Initial + 1 restart
 
@@ -453,8 +457,8 @@ describe.sequential('MCPProxy Integration Tests', () => {
       fs.writeFileSync(path.join(testDir, 'lib/utils.js'), 'module.exports = {}');
 
       // Wait for another restart
-      await harness.waitForRestarts(2);
-      counts = harness.getCounts();
+      await testHarness.waitForRestarts(2);
+      counts = testHarness.getCounts();
       expect(counts.restarts).toBe(2);
       expect(counts.initializeResponses).toBe(3); // Initial + 2 restarts
 
@@ -467,28 +471,29 @@ describe.sequential('MCPProxy Integration Tests', () => {
       fs.chmodSync(serverPath, 0o755);
       fs.mkdirSync(path.join(testDir, 'src'), { recursive: true });
 
-      const harness = new MCPTestHarness(new PassThrough(), new PassThrough());
+      testHarness = new MCPTestHarness(new PassThrough(), new PassThrough());
 
       proxy = new MCPProxy({
         serverCommand: 'node',
         serverArgs: ['server.js'],
         cwd: testDir,
+        buildCommand: 'echo "Build done" >&2',
         watchPattern: 'src',  // Directory, not glob
         debounceMs: 100,
         onExit: () => {}
-      }, harness.clientIn, harness.clientOut);
+      }, testHarness.clientIn, testHarness.clientOut);
 
       await proxy.start();
-      await harness.initialize();
+      await testHarness.initialize();
 
       // Write a TypeScript file
       fs.writeFileSync(path.join(testDir, 'src/test.ts'), 'console.log("test")');
 
       // Wait for restart
-      await harness.waitForRestarts(1);
+      await testHarness.waitForRestarts(1);
 
       // Verify restart happened
-      const counts = harness.getCounts();
+      const counts = testHarness.getCounts();
       expect(counts.restarts).toBe(1);
     }, 20000);
 
@@ -499,22 +504,23 @@ describe.sequential('MCPProxy Integration Tests', () => {
       fs.chmodSync(serverPath, 0o755);
       fs.mkdirSync(path.join(testDir, 'src'), { recursive: true });
 
-      const harness = new MCPTestHarness(new PassThrough(), new PassThrough());
+      testHarness = new MCPTestHarness(new PassThrough(), new PassThrough());
 
       proxy = new MCPProxy({
         serverCommand: 'node',
         serverArgs: ['server.js'],
         cwd: testDir,
+        buildCommand: 'echo "Build done" >&2',
         watchPattern: 'src',
         debounceMs: 100,
         onExit: () => {}
-      }, harness.clientIn, harness.clientOut);
+      }, testHarness.clientIn, testHarness.clientOut);
 
       await proxy.start();
-      await harness.initialize();
+      await testHarness.initialize();
 
       // Verify initial state
-      let counts = harness.getCounts();
+      let counts = testHarness.getCounts();
       expect(counts.initializeResponses).toBe(1);
       expect(counts.restarts).toBe(0);
 
@@ -526,8 +532,8 @@ describe.sequential('MCPProxy Integration Tests', () => {
       fs.writeFileSync(path.join(testDir, 'src/styles.css'), 'body {}');
 
       // Wait and verify no restart happened
-      await harness.expectNoMoreRestarts(0, 500);
-      counts = harness.getCounts();
+      await testHarness.expectNoMoreRestarts(0, 500);
+      counts = testHarness.getCounts();
       expect(counts.restarts).toBe(0); // No restart
 
       // TypeScript files SHOULD trigger restarts
@@ -540,8 +546,8 @@ describe.sequential('MCPProxy Integration Tests', () => {
       fs.closeSync(fd);
 
       // Wait for restart to complete
-      await harness.waitForRestarts(1);
-      counts = harness.getCounts();
+      await testHarness.waitForRestarts(1);
+      counts = testHarness.getCounts();
       expect(counts.restarts).toBe(1);
       expect(counts.initializeResponses).toBe(2); // Initial + 1 restart
 
@@ -554,7 +560,7 @@ describe.sequential('MCPProxy Integration Tests', () => {
       fs.chmodSync(serverPath, 0o755);
       fs.mkdirSync(path.join(testDir, 'src'), { recursive: true });
 
-      const harness = new MCPTestHarness(new PassThrough(), new PassThrough());
+      testHarness = new MCPTestHarness(new PassThrough(), new PassThrough());
 
       proxy = new MCPProxy({
         serverCommand: 'node',
@@ -564,13 +570,13 @@ describe.sequential('MCPProxy Integration Tests', () => {
         watchPattern: 'src/**/*.ts',
         debounceMs: 100, // Short debounce for testing
         onExit: () => {}
-      }, harness.clientIn, harness.clientOut);
+      }, testHarness.clientIn, testHarness.clientOut);
 
       await proxy.start();
-      await harness.initialize();
+      await testHarness.initialize();
 
       // Verify initial state
-      let counts = harness.getCounts();
+      let counts = testHarness.getCounts();
       expect(counts.initializeResponses).toBe(1);
       expect(counts.restarts).toBe(0);
 
@@ -587,10 +593,10 @@ describe.sequential('MCPProxy Integration Tests', () => {
       fs.writeFileSync(path.join(testDir, 'src/file4.ts'), 'process.stderr.write("4\\n")');
 
       // Wait for exactly ONE restart (coalesced)
-      await harness.waitForRestarts(1);
+      await testHarness.waitForRestarts(1);
 
       // Assert - Should have coalesced into single restart
-      counts = harness.getCounts();
+      counts = testHarness.getCounts();
       expect(counts.restarts).toBe(1); // Only 1 restart despite 4 file changes
       expect(counts.initializeResponses).toBe(2); // Initial + 1 restart
 
@@ -621,7 +627,7 @@ describe.sequential('MCPProxy Integration Tests', () => {
       fs.chmodSync(serverPath, 0o755);
       fs.mkdirSync(path.join(testDir, 'src'), { recursive: true });
 
-      const harness = new MCPTestHarness(new PassThrough(), new PassThrough());
+      testHarness = new MCPTestHarness(new PassThrough(), new PassThrough());
 
       proxy = new MCPProxy({
         serverCommand: 'node',
@@ -631,13 +637,13 @@ describe.sequential('MCPProxy Integration Tests', () => {
         watchPattern: 'src/**/*.ts',
         debounceMs: 50, // Short debounce
         onExit: () => {}
-      }, harness.clientIn, harness.clientOut);
+      }, testHarness.clientIn, testHarness.clientOut);
 
       await proxy.start();
-      await harness.initialize();
+      await testHarness.initialize();
 
       // Verify initial state
-      let counts = harness.getCounts();
+      let counts = testHarness.getCounts();
       expect(counts.initializeResponses).toBe(1);
       expect(counts.restarts).toBe(0);
 
@@ -658,7 +664,7 @@ describe.sequential('MCPProxy Integration Tests', () => {
       await new Promise(resolve => setTimeout(resolve, 3000));
 
       // Assert - Multiple changes but overlapping restarts prevented
-      counts = harness.getCounts();
+      counts = testHarness.getCounts();
       expect(counts.restarts).toBeGreaterThanOrEqual(1); // At least one restart
       expect(counts.restarts).toBeLessThanOrEqual(3); // But limited restarts (no overlap)
 
