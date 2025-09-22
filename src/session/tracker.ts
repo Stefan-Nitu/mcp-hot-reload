@@ -8,6 +8,7 @@ export class SessionTracker {
   private initializeRequestId: string | number | null = null;
   private initialized = false;
   private readonly messageParser: MessageParser;
+  private pendingRequest: { id: string | number; method: string } | null = null;
 
   constructor(messageParser: MessageParser) {
     this.messageParser = messageParser;
@@ -21,6 +22,12 @@ export class SessionTracker {
     const { messages, rawMessages } = this.messageParser.parseMessages(data);
 
     messages.forEach((message, index) => {
+      // Track any request with an ID (not notifications)
+      if (message.id && message.method) {
+        this.pendingRequest = { id: message.id, method: message.method };
+        log.debug({ requestId: message.id, method: message.method }, 'Tracking pending request');
+      }
+
       if (message.method === 'initialize' && message.id) {
         this.initializeRequestRaw = rawMessages[index];
         this.initializeRequestId = message.id;
@@ -40,6 +47,12 @@ export class SessionTracker {
     const { messages } = this.messageParser.parseMessages(data);
 
     messages.forEach(message => {
+      // Clear pending request when we get a response
+      if (this.pendingRequest && message.id === this.pendingRequest.id) {
+        log.debug({ requestId: message.id }, 'Received response, clearing pending request');
+        this.pendingRequest = null;
+      }
+
       if (message.id === this.initializeRequestId && message.result) {
         this.initialized = true;
         log.debug({ requestId: message.id }, 'Session initialized');
@@ -61,5 +74,14 @@ export class SessionTracker {
     this.initializeRequestRaw = null;
     this.initializeRequestId = null;
     this.initialized = false;
+    this.pendingRequest = null;
+  }
+
+  getPendingRequest(): { id: string | number; method: string } | null {
+    return this.pendingRequest;
+  }
+
+  clearPendingRequest(): void {
+    this.pendingRequest = null;
   }
 }

@@ -23,6 +23,17 @@ import { createLogger } from './utils/logger.js';
 
 const log = createLogger('index');
 
+// Catch uncaught exceptions to prevent proxy crash
+process.on('uncaughtException', (error) => {
+  log.error({ err: error }, 'Uncaught exception - proxy would have crashed');
+  // Don't exit - try to keep running
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  log.error({ reason, promise }, 'Unhandled rejection - proxy would have crashed');
+  // Don't exit - try to keep running
+});
+
 // Get package.json for version
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

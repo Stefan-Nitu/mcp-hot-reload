@@ -12,7 +12,9 @@ const transport = process.env.NODE_ENV === 'production'
         destination: 2, // 2 = stderr file descriptor
         colorize: true,
         ignore: 'pid,hostname',
-        translateTime: 'HH:MM:ss.l'
+        translateTime: 'HH:MM:ss.l',
+        levelFirst: true,
+        minimumLevel: logLevel  // Ensure pino-pretty respects our log level
       }
     };
 
