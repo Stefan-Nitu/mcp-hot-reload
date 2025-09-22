@@ -4,6 +4,7 @@ import { createLogger } from '../utils/logger.js';
 import { ProcessReadinessChecker } from './readiness-checker.js';
 import { ProcessTerminator } from './terminator.js';
 import { ProcessSpawner } from './spawner.js';
+import { ServerConnection, ServerConnectionImpl } from './server-connection.js';
 
 const log = createLogger('mcp-server-lifecycle');
 
@@ -33,7 +34,7 @@ export class McpServerLifecycle {
     this.spawner = spawner;
   }
 
-  async start(): Promise<{ stdin: Writable; stdout: Readable }> {
+  async start(): Promise<ServerConnection> {
     if (this.currentProcess) {
       throw new Error('MCP server is already running');
     }
@@ -50,7 +51,7 @@ export class McpServerLifecycle {
 
       this.currentProcess = childProcess;
 
-      // Handle unexpected exit (crash)
+      // Handle unexpected exit (crash) for internal tracking only
       childProcess.on('exit', (code: number | null, signal: NodeJS.Signals | null) => {
         if (this.currentProcess === childProcess) {
           // Unexpected exit - we didn't call stop()
@@ -59,19 +60,17 @@ export class McpServerLifecycle {
         }
       });
 
-      // Handle process errors
-      childProcess.on('error', (error: Error) => {
-        log.error({ err: error }, 'Process error');
-      });
-
       // Wait for process to be ready
       await this.readinessChecker.waitUntilReady(childProcess);
       log.info('Process ready');
 
-      return {
-        stdin: childProcess.stdin!,
-        stdout: childProcess.stdout!
-      };
+      // Return ServerConnection for clean crash handling
+      return new ServerConnectionImpl(
+        childProcess.stdin!,
+        childProcess.stdout!,
+        childProcess.pid!,
+        childProcess
+      );
     } catch (error) {
       log.error({ err: error }, 'Failed to start process');
       this.currentProcess = null;
@@ -90,7 +89,7 @@ export class McpServerLifecycle {
     await this.restartTerminator.terminate(childProcess);
   }
 
-  async restart(): Promise<{ stdin: Writable; stdout: Readable }> {
+  async restart(): Promise<ServerConnection> {
     try {
       await this.stopForRestart();
       return await this.start();
