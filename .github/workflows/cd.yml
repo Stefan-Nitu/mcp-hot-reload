@@ -72,5 +72,3 @@ jobs:
           git push origin "$TAG"
           echo "✅ Created and pushed tag $TAG"
         fi
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
