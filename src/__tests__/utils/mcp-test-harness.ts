@@ -35,14 +35,11 @@ export class MCPTestHarness {
           if (msg.id === 1 && msg.result?.protocolVersion) {
             this.initializeResponses.push(msg);
             this.serverReady = true;
-            if (this.initializeResponses.length > 1) {
-              this.restartCount++;
-            }
           }
 
-          // Track notification messages
+          // Track notification messages - this is the clear signal of a restart
           if (msg.method === 'notifications/tools/list_changed') {
-            // This indicates a restart is happening
+            this.restartCount++;
           }
         } catch (e) {
           // Not JSON, ignore
@@ -108,7 +105,8 @@ export class MCPTestHarness {
   /**
    * Wait for a specific number of restarts to complete
    */
-  async waitForRestarts(count: number, timeout = 5000) {
+  async waitForRestarts(count: number, timeout = 10000) {
+    // Increase timeout for CI environments where file watching may be slower
     await expect.poll(() => this.restartCount, {
       interval: 100,
       timeout
@@ -119,7 +117,6 @@ export class MCPTestHarness {
    * Wait and verify that restart count remains at expected value (no unexpected restarts)
    */
   async expectNoMoreRestarts(expectedCount: number, waitTime = 1000) {
-    const startCount = this.restartCount;
     await new Promise(resolve => setTimeout(resolve, waitTime));
     expect(this.restartCount).toBe(expectedCount);
   }

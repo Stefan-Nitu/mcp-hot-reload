@@ -25,17 +25,10 @@ export class FileWatcher {
       patterns: config.patterns,
       cwd: config.cwd || process.cwd(),
       debounceMs: config.debounceMs || 300,
+      // Default to TypeScript extensions only when watching directories
+      // This aligns with README: "Directory (e.g., ./src): Watches all TypeScript files"
       extensions: config.extensions || [
-        '.ts', '.tsx', '.mts', '.cts',  // TypeScript
-        '.js', '.jsx', '.mjs', '.cjs',  // JavaScript
-        '.py', '.pyw',                   // Python
-        '.go',                           // Go
-        '.rs',                           // Rust
-        '.java',                         // Java
-        '.rb',                           // Ruby
-        '.php',                          // PHP
-        '.cpp', '.c', '.h', '.hpp',      // C/C++
-        '.cs'                            // C#
+        '.ts', '.tsx', '.mts', '.cts'   // TypeScript only by default
       ]
     };
   }

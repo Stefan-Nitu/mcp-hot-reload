@@ -499,7 +499,13 @@ describe.sequential('MCPProxy Integration Tests', () => {
       expect(counts.restarts).toBe(0); // No restart
 
       // TypeScript files SHOULD trigger restarts
-      fs.writeFileSync(path.join(testDir, 'src/index.ts'), 'process.stderr.write("test\\n")');
+      const filePath = path.join(testDir, 'src/index.ts');
+      fs.writeFileSync(filePath, 'process.stderr.write("test\\n")');
+
+      // Force file system to flush write and update mtime
+      const fd = fs.openSync(filePath, 'r+');
+      fs.fsyncSync(fd);
+      fs.closeSync(fd);
 
       // Wait for restart to complete
       await harness.waitForRestarts(1);
