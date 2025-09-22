@@ -12,6 +12,7 @@ import { McpServerLifecycle } from './process/lifecycle.js';
 import { ProcessSpawner } from './process/spawner.js';
 import { ProcessTerminator } from './process/terminator.js';
 import { ProcessReadinessChecker } from './process/readiness-checker.js';
+import { ServerConnection } from './process/server-connection.js';
 
 const log = createLogger('mcp-proxy');
 
@@ -40,6 +41,7 @@ export class MCPProxy {
   private signalHandler?: () => void;
   private stdinEndHandler?: () => void;
   private stdinCloseHandler?: () => void;
+  private currentServerConnection?: ServerConnection;
 
   constructor(
     config: ProxyConfig = {},
@@ -107,6 +109,8 @@ export class MCPProxy {
       spawner
     );
 
+    // Crash handler will be set up after server starts in the start() method
+
     // Register signal handlers immediately in constructor to ensure they're always active
     // This is critical for proper cleanup even if start() is skipped
     this.registerHandlers();
@@ -136,8 +140,12 @@ export class MCPProxy {
     }
 
     // Start server and connect streams
-    const { stdin: serverStdin, stdout: serverStdout } = await this.serverLifecycle.start();
+    this.currentServerConnection = await this.serverLifecycle.start();
+    const { stdin: serverStdin, stdout: serverStdout } = this.currentServerConnection;
     this.messageRouter.connectServer(serverStdin, serverStdout);
+
+    // Set up crash monitoring
+    this.setupCrashMonitoring();
 
     // Start hot reload file watching
     this.hotReload.start();
@@ -186,11 +194,20 @@ export class MCPProxy {
             // Disconnect old streams
             this.messageRouter.disconnectServer();
 
+            // Clean up old connection
+            if (this.currentServerConnection) {
+              this.currentServerConnection.dispose();
+            }
+
             // Restart server and get new streams
-            const { stdin: serverStdin, stdout: serverStdout } = await this.serverLifecycle.restart();
+            this.currentServerConnection = await this.serverLifecycle.restart();
+            const { stdin: serverStdin, stdout: serverStdout } = this.currentServerConnection;
 
             // Connect new streams
             this.messageRouter.connectServer(serverStdin, serverStdout);
+
+            // Re-establish crash monitoring
+            this.setupCrashMonitoring();
 
             // If we have a stored initialize request, re-send it to restore session
             const initRequest = this.sessionTracker.getInitializeRequest();
@@ -258,6 +275,63 @@ export class MCPProxy {
     this.signalHandler = exitHandler;
     this.stdinEndHandler = exitHandler;
     this.stdinCloseHandler = exitHandler;
+  }
+
+  private setupCrashMonitoring(): void {
+    if (!this.currentServerConnection) {
+      return;
+    }
+
+    // Monitor for crashes asynchronously
+    this.currentServerConnection.waitForCrash().then(({ code, signal }) => {
+      this.handleServerCrash(code, signal);
+    }).catch(error => {
+      log.error({ err: error }, 'Error monitoring server crash');
+    });
+  }
+
+  private handleServerCrash(code: number | null, signal: NodeJS.Signals | null): void {
+    // Get the pending request that was waiting for a response
+    const pendingRequest = this.sessionTracker.getPendingRequest();
+
+    if (pendingRequest && this.stdout.writable && !(this.stdout as any).destroyed) {
+      // Build error message
+      let errorMessage = 'MCP server crashed:';
+      if (signal) {
+        errorMessage += ` (killed by signal ${signal})`;
+      } else if (code !== null) {
+        errorMessage += ` (exit code ${code})`;
+      }
+
+      errorMessage += ". Fix build and try again";
+
+      // Send JSON-RPC error response to the client
+      const errorResponse = {
+        jsonrpc: '2.0',
+        id: pendingRequest.id,
+        error: {
+          code: -32603, // Internal error
+          message: errorMessage,
+          data: {
+            exitCode: code,
+            signal: signal,
+            method: pendingRequest.method,
+            info: 'The MCP server process terminated unexpectedly. Check server logs for details.'
+          }
+        }
+      };
+
+      try {
+        log.info({ pendingRequestId: pendingRequest.id }, 'Sending crash error to client');
+        this.stdout.write(JSON.stringify(errorResponse) + '\n');
+        // Clear the pending request since we responded
+        this.sessionTracker.clearPendingRequest();
+      } catch (error) {
+        log.error({ err: error }, 'Failed to send crash error to client');
+      }
+    } else if (!pendingRequest) {
+      log.info('Server crashed but no pending request to notify');
+    }
   }
 
   public cleanup(): void {

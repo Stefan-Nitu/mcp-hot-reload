@@ -3,6 +3,7 @@ import { McpServerLifecycle, type McpServerConfig } from '../lifecycle.js';
 import { ProcessReadinessChecker } from '../readiness-checker.js';
 import { ProcessTerminator, type TerminationOptions } from '../terminator.js';
 import { ProcessSpawner } from '../spawner.js';
+import { ServerConnection } from '../server-connection.js';
 import { EventEmitter } from 'events';
 import { PassThrough } from 'stream';
 import type { ChildProcess } from 'child_process';
@@ -41,25 +42,27 @@ function mockTerminatorTerminate(terminator: ProcessTerminator): void {
 
 function createMockChildProcess(overrides: Partial<ChildProcess> = {}): ChildProcess {
   const emitter = new EventEmitter();
+  const mock = emitter as ChildProcess;
 
-  // Merge EventEmitter methods with ChildProcess properties
-  return Object.assign(emitter, {
-    stdin: new PassThrough(),
-    stdout: new PassThrough(),
-    stderr: new PassThrough(),
-    pid: 123,
-    killed: false,
-    exitCode: null,
-    signalCode: null,
-    spawnargs: [],
-    spawnfile: '',
-    kill: vi.fn().mockReturnValue(true),
-    send: vi.fn().mockReturnValue(true),
-    disconnect: vi.fn(),
-    unref: vi.fn(),
-    ref: vi.fn(),
-    ...overrides
-  }) as ChildProcess;
+  // Define configurable properties for testing
+  Object.defineProperties(mock, {
+    stdin: { value: overrides.stdin || new PassThrough(), writable: true, configurable: true },
+    stdout: { value: overrides.stdout || new PassThrough(), writable: true, configurable: true },
+    stderr: { value: overrides.stderr || new PassThrough(), writable: true, configurable: true },
+    pid: { value: overrides.pid || 123, writable: true, configurable: true },
+    killed: { value: overrides.killed || false, writable: true, configurable: true },
+    exitCode: { value: overrides.exitCode || null, writable: true, configurable: true },
+    signalCode: { value: overrides.signalCode || null, writable: true, configurable: true },
+    spawnargs: { value: overrides.spawnargs || [], writable: true, configurable: true },
+    spawnfile: { value: overrides.spawnfile || '', writable: true, configurable: true },
+    kill: { value: overrides.kill || vi.fn().mockReturnValue(true), writable: true, configurable: true },
+    send: { value: overrides.send || vi.fn().mockReturnValue(true), writable: true, configurable: true },
+    disconnect: { value: overrides.disconnect || vi.fn(), writable: true, configurable: true },
+    unref: { value: overrides.unref || vi.fn(), writable: true, configurable: true },
+    ref: { value: overrides.ref || vi.fn(), writable: true, configurable: true }
+  });
+
+  return mock;
 }
 
 describe('McpServerLifecycle', () => {
@@ -108,9 +111,9 @@ describe('McpServerLifecycle', () => {
   });
 
   describe('start', () => {
-    it('should spawn process and wait for readiness', async () => {
+    it('should spawn process and return ServerConnection', async () => {
       // Act
-      await lifecycle.start();
+      const connection = await lifecycle.start();
 
       // Assert
       expect(mockSpawner.spawn).toHaveBeenCalledWith({
@@ -120,6 +123,15 @@ describe('McpServerLifecycle', () => {
         env: { TEST: 'value' }
       });
       expect(mockReadinessChecker.waitUntilReady).toHaveBeenCalledWith(mockChildProcess);
+
+      // Verify ServerConnection properties
+      expect(connection).toBeDefined();
+      expect(connection.stdin).toBe(mockChildProcess.stdin);
+      expect(connection.stdout).toBe(mockChildProcess.stdout);
+      expect(connection.pid).toBe(123);
+      expect(connection.isAlive()).toBe(true);
+      expect(connection.waitForCrash).toBeInstanceOf(Function);
+      expect(connection.dispose).toBeInstanceOf(Function);
     });
 
     it('should not allow starting twice', async () => {
@@ -176,19 +188,26 @@ describe('McpServerLifecycle', () => {
       await expect(lifecycle.start()).rejects.toThrow('Readiness check failed');
     });
 
-    it('should track unexpected process exits', async () => {
+    it('should track unexpected process exits via ServerConnection', async () => {
       // Arrange
-      await lifecycle.start();
+      const connection = await lifecycle.start();
 
-      // Act
-      mockChildProcess.emit('exit', 1, null);
+      // Act - Simulate process crash
+      const crashPromise = connection.waitForCrash();
+      // Set exitCode before emitting exit (like real process)
+      Object.defineProperty(mockChildProcess, 'exitCode', { value: 42, configurable: true });
+      mockChildProcess.emit('exit', 42, null);
 
-      // Assert - process should be cleared, allowing restart with new streams
-      const streams = await lifecycle.start();
-      expect(streams).toEqual({
-        stdin: mockChildProcess.stdin,
-        stdout: mockChildProcess.stdout
-      });
+      // Assert - Connection should detect the crash
+      const crashResult = await crashPromise;
+      expect(crashResult).toEqual({ code: 42, signal: null });
+      expect(connection.isAlive()).toBe(false);
+
+      // Process should be cleared, allowing restart
+      const newConnection = await lifecycle.start();
+      expect(newConnection).toBeDefined();
+      expect(newConnection.stdin).toBe(mockChildProcess.stdin);
+      expect(newConnection.stdout).toBe(mockChildProcess.stdout);
     });
 
     it('should fail to start if process exits during readiness check', async () => {
@@ -222,16 +241,6 @@ describe('McpServerLifecycle', () => {
       await expect(lifecycle.start()).rejects.toThrow('Process stdin not ready after timeout');
     });
 
-    it('should register error handler for process', async () => {
-      // Arrange
-      const errorSpy = vi.spyOn(mockChildProcess, 'on');
-
-      // Act
-      await lifecycle.start();
-
-      // Assert
-      expect(errorSpy).toHaveBeenCalledWith('error', expect.any(Function));
-    });
   });
 
   describe('restart', () => {

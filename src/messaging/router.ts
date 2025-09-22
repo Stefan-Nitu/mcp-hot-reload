@@ -74,6 +74,17 @@ export class MessageRouter {
     log.debug('Adding server data listener');
     this.fromMcpServer.on('data', this.serverDataHandler);
 
+    // Handle stream errors to prevent proxy crash when child dies
+    this.fromMcpServer.on('error', (error) => {
+      log.error({ err: error }, 'Server stdout stream error');
+      // Don't crash - let lifecycle handle the dead process
+    });
+
+    this.toMcpServer.on('error', (error) => {
+      log.error({ err: error }, 'Server stdin stream error');
+      // Don't crash - let lifecycle handle the dead process
+    });
+
     // Flush any queued messages
     const queued = this.messageQueue.flush();
     for (const message of queued) {
@@ -91,6 +102,11 @@ export class MessageRouter {
   disconnectServer(): void {
     if (this.fromMcpServer && this.serverDataHandler) {
       this.fromMcpServer.removeListener('data', this.serverDataHandler);
+      this.fromMcpServer.removeAllListeners('error');
+    }
+
+    if (this.toMcpServer) {
+      this.toMcpServer.removeAllListeners('error');
     }
 
     this.toMcpServer = null;
