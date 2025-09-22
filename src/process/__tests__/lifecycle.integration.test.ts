@@ -3,12 +3,9 @@ import { McpServerLifecycle, type McpServerConfig } from '../lifecycle.js';
 import { ProcessReadinessChecker } from '../readiness-checker.js';
 import { ProcessTerminator } from '../terminator.js';
 import { ProcessSpawner } from '../spawner.js';
-import * as path from 'path';
-import * as url from 'url';
 import type { ChildProcess } from 'child_process';
 import fixtures from '../../__tests__/fixtures/test-fixtures.js';
 
-const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 const TEST_SERVER_PATH = fixtures.TEST_SERVERS.SIMPLE_ECHO;
 
 // Helper function to cleanup lifecycle processes since stop() was removed

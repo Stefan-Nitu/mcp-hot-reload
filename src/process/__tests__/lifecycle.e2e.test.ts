@@ -4,8 +4,9 @@ import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { promisify } from 'util';
 import { exec } from 'child_process';
-import { writeFileSync, mkdirSync, rmSync } from 'fs';
-import { cleanupProxyProcess, cleanupTestDirectory } from '../../__tests__/utils/process-cleanup.js';
+import { writeFileSync, mkdirSync } from 'fs';
+import { cleanupProxyProcess } from '../../__tests__/utils/process-cleanup.js';
+import { createTestDirectory, cleanupTestDirectory } from '../../__tests__/utils/test-directory.js';
 import fixtures from '../../__tests__/fixtures/test-fixtures.js';
 
 const execAsync = promisify(exec);
@@ -146,8 +147,7 @@ describe.sequential('MCP Server Lifecycle E2E', () => {
 
   it('should kill all processes when proxy stdin closes', async () => {
     // Arrange - Use existing test fixture
-    testDir = path.join(fixtures.PROJECT_ROOT, `test-cleanup-${Date.now()}`);
-    mkdirSync(testDir, { recursive: true });
+    testDir = createTestDirectory('test-cleanup');
 
     // Use the stdin-test-server fixture which handles stdin properly
     const testServerPath = fixtures.TEST_SERVERS.STDIN_TEST;
@@ -284,8 +284,7 @@ describe.sequential('MCP Server Lifecycle E2E', () => {
 
   it('should track process references correctly through multiple restarts', { timeout: 20000 }, async () => {
     // Arrange
-    const testDir = path.join(fixtures.PROJECT_ROOT, 'test-multi-restart-' + Date.now());
-    mkdirSync(testDir, { recursive: true });
+    const testDir = createTestDirectory('test-multi-restart');
     mkdirSync(path.join(testDir, 'src'), { recursive: true });
 
     let version = 1;
@@ -433,6 +432,6 @@ setInterval(() => {}, 1000).unref();`;
     });
 
     // Cleanup test directory
-    rmSync(testDir, { recursive: true, force: true });
+    cleanupTestDirectory(testDir);
   });
 });

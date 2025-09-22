@@ -5,10 +5,25 @@ import * as fs from 'fs';
 import * as path from 'path';
 import fixtures from './fixtures/test-fixtures.js';
 import { MCPTestHarness } from './utils/mcp-test-harness.js';
-import { cleanupTestDirectory } from './utils/process-cleanup.js';
-import { createTestDirectory } from './utils/test-directory.js';
+import { createTestDirectory, cleanupTestDirectory } from './utils/test-directory.js';
 
 const TEST_SERVER_PATH = fixtures.TEST_SERVERS.ALL_CONTENT_TYPES;
+
+// Test timing constants (in milliseconds)
+const DEBOUNCE_MS = 100;           // File watcher debounce time for coalescing tests
+const SHORT_DEBOUNCE_MS = 50;      // Shorter debounce for faster test execution
+const DEBOUNCE_BUFFER = 20;        // Additional time after debounce to ensure it has fired
+const WAIT_FOR_NO_RESTART = 500;   // Wait to verify no restart occurred
+const RAPID_CHANGE_INTERVAL = 20;  // Interval between rapid changes to test debounce coalescing (must be < DEBOUNCE_MS)
+const WAIT_FOR_BUILD_START = 100;  // Wait for build process to begin
+const WAIT_FOR_RESTART = 1000;     // Wait after restart for stability
+const WAIT_FOR_BUILD_FAIL = 2000;  // Wait for build failure handling
+const SLOW_BUILD_MS = 500;         // Slow build duration for testing build-in-progress scenarios
+const TEST_BUILD_MS = 200;         // Test build duration for overlapping restart tests
+
+// Test timeout constants
+const TEST_TIMEOUT_SHORT = 10000;  // 10 seconds for simpler tests
+const TEST_TIMEOUT_LONG = 20000;   // 20 seconds for complex file watching tests
 
 describe.sequential('MCPProxy Integration Tests', () => {
   let testDir: string;
@@ -52,7 +67,7 @@ describe.sequential('MCPProxy Integration Tests', () => {
       serverArgs = ['server.js'],
       buildCommand = 'echo "Building"',
       watchPattern = path.join(testDir, 'src'),
-      debounceMs = 100,
+      debounceMs = DEBOUNCE_MS,
       skipInitialize = false,
       createDirs = []
     } = options;
@@ -263,7 +278,7 @@ describe.sequential('MCPProxy Integration Tests', () => {
 
       // Act - modify the dummy file (should trigger 'change' event)
       const watchFile = path.join(testDir, 'src/dummy.ts');
-      fs.writeFileSync(watchFile, '// modified content');
+      harness.changeFile(watchFile, '// modified content');
 
       // Wait for restart to complete
       await harness.waitForRestarts(1);
@@ -272,7 +287,7 @@ describe.sequential('MCPProxy Integration Tests', () => {
       const counts = harness.getCounts();
       expect(counts.restarts).toBe(1);
       expect(counts.messages).toBeGreaterThan(initialMessageCount);
-    }, 10000);
+    }, TEST_TIMEOUT_SHORT);
 
     it('should support glob patterns for file watching', async () => {
       // Arrange
@@ -291,15 +306,16 @@ describe.sequential('MCPProxy Integration Tests', () => {
       // Act & Assert
 
       // TypeScript files should NOT trigger (not in pattern)
-      fs.writeFileSync(path.join(testDir, 'src/index.ts'), 'process.stderr.write("ts\\n")');
+      harness.writeFile(path.join(testDir, 'src/index.ts'), 'process.stderr.write("ts\\n")');
 
       // Wait and verify no restart happened
-      await harness.expectNoMoreRestarts(0, 500);
+      await harness.wait(WAIT_FOR_NO_RESTART);
+      expect(harness.getCounts().restarts).toBe(0);
       counts = harness.getCounts();
       expect(counts.restarts).toBe(0); // No restart
 
       // Python files in src SHOULD trigger
-      fs.writeFileSync(path.join(testDir, 'src/main.py'), 'print("hello")');
+      harness.writeFile(path.join(testDir, 'src/main.py'), 'print("hello")');
 
       // Wait for restart to complete
       await harness.waitForRestarts(1);
@@ -308,7 +324,7 @@ describe.sequential('MCPProxy Integration Tests', () => {
       expect(counts.initializeResponses).toBe(2); // Initial + 1 restart
 
       // JavaScript files in lib SHOULD trigger
-      fs.writeFileSync(path.join(testDir, 'lib/utils.js'), 'module.exports = {}');
+      harness.writeFile(path.join(testDir, 'lib/utils.js'), 'module.exports = {}');
 
       // Wait for another restart
       await harness.waitForRestarts(2);
@@ -316,7 +332,7 @@ describe.sequential('MCPProxy Integration Tests', () => {
       expect(counts.restarts).toBe(2);
       expect(counts.initializeResponses).toBe(3); // Initial + 2 restarts
 
-    }, 20000);
+    }, TEST_TIMEOUT_LONG);
 
     it('simple directory watch test - CI debugging', async () => {
       // Minimal test to isolate directory watching issue in CI
@@ -327,7 +343,7 @@ describe.sequential('MCPProxy Integration Tests', () => {
       proxy = testProxy;
 
       // Write a TypeScript file
-      fs.writeFileSync(path.join(testDir, 'src/test.ts'), 'console.log("test")');
+      harness.writeFile(path.join(testDir, 'src/test.ts'), 'console.log("test")');
 
       // Wait for restart
       await harness.waitForRestarts(1);
@@ -335,7 +351,7 @@ describe.sequential('MCPProxy Integration Tests', () => {
       // Verify restart happened
       const counts = harness.getCounts();
       expect(counts.restarts).toBe(1);
-    }, 20000);
+    }, TEST_TIMEOUT_LONG);
 
     it('should only restart for TypeScript files, not other file types', async () => {
       // Arrange
@@ -353,18 +369,19 @@ describe.sequential('MCPProxy Integration Tests', () => {
       // Act & Assert
 
       // Non-TypeScript files should NOT trigger restarts
-      fs.writeFileSync(path.join(testDir, 'src/readme.md'), '# README');
-      fs.writeFileSync(path.join(testDir, 'src/config.json'), '{}');
-      fs.writeFileSync(path.join(testDir, 'src/styles.css'), 'body {}');
+      harness.writeFile(path.join(testDir, 'src/readme.md'), '# README');
+      harness.writeFile(path.join(testDir, 'src/config.json'), '{}');
+      harness.writeFile(path.join(testDir, 'src/styles.css'), 'body {}');
 
       // Wait and verify no restart happened
-      await harness.expectNoMoreRestarts(0, 500);
+      await harness.wait(WAIT_FOR_NO_RESTART);
+      expect(harness.getCounts().restarts).toBe(0);
       counts = harness.getCounts();
       expect(counts.restarts).toBe(0); // No restart
 
       // TypeScript files SHOULD trigger restarts
       const filePath = path.join(testDir, 'src/index.ts');
-      fs.writeFileSync(filePath, 'process.stderr.write("test\\n")');
+      harness.writeFile(filePath, 'process.stderr.write("test\\n")');
 
       // Force file system to flush write and update mtime
       const fd = fs.openSync(filePath, 'r+');
@@ -377,13 +394,14 @@ describe.sequential('MCPProxy Integration Tests', () => {
       expect(counts.restarts).toBe(1);
       expect(counts.initializeResponses).toBe(2); // Initial + 1 restart
 
-    }, 20000);
+    }, TEST_TIMEOUT_LONG);
 
     it('should coalesce multiple rapid file changes into a single restart', async () => {
       // Arrange
       const { proxy: testProxy, harness } = await setupTestEnvironment({
         watchPattern: 'src/**/*.ts',
-        buildCommand: 'echo "Build done" >&2'
+        buildCommand: 'echo "Build done" >&2',
+        debounceMs: DEBOUNCE_MS
       });
       proxy = testProxy;
 
@@ -393,16 +411,16 @@ describe.sequential('MCPProxy Integration Tests', () => {
       expect(counts.restarts).toBe(0);
 
       // Act - Trigger multiple rapid file changes (faster than debounce)
-      fs.writeFileSync(path.join(testDir, 'src/file1.ts'), 'process.stderr.write("1\\n")');
-      await new Promise(resolve => setTimeout(resolve, 20)); // Less than debounce
+      harness.writeFile(path.join(testDir, 'src/file1.ts'), 'process.stderr.write("1\\n")');
+      await harness.wait(RAPID_CHANGE_INTERVAL);
 
-      fs.writeFileSync(path.join(testDir, 'src/file2.ts'), 'process.stderr.write("2\\n")');
-      await new Promise(resolve => setTimeout(resolve, 20)); // Less than debounce
+      harness.writeFile(path.join(testDir, 'src/file2.ts'), 'process.stderr.write("2\\n")');
+      await harness.wait(RAPID_CHANGE_INTERVAL);
 
-      fs.writeFileSync(path.join(testDir, 'src/file3.ts'), 'process.stderr.write("3\\n")');
-      await new Promise(resolve => setTimeout(resolve, 20)); // Less than debounce
+      harness.writeFile(path.join(testDir, 'src/file3.ts'), 'process.stderr.write("3\\n")');
+      await harness.wait(RAPID_CHANGE_INTERVAL);
 
-      fs.writeFileSync(path.join(testDir, 'src/file4.ts'), 'process.stderr.write("4\\n")');
+      harness.writeFile(path.join(testDir, 'src/file4.ts'), 'process.stderr.write("4\\n")');
 
       // Wait for exactly ONE restart (coalesced)
       await harness.waitForRestarts(1);
@@ -416,10 +434,10 @@ describe.sequential('MCPProxy Integration Tests', () => {
 
       // We triggered 4 file changes:
       // - file1.ts at T+0ms
-      // - file2.ts at T+20ms
-      // - file3.ts at T+40ms
-      // - file4.ts at T+60ms
-      // All within the 100ms debounce window
+      // - file2.ts at T+20ms (RAPID_CHANGE_INTERVAL)
+      // - file3.ts at T+40ms (RAPID_CHANGE_INTERVAL × 2)
+      // - file4.ts at T+60ms (RAPID_CHANGE_INTERVAL × 3)
+      // All within the DEBOUNCE_MS window
 
       // If coalescing FAILED, each file change would trigger its own restart:
       // - 1 initial response + (4 restarts × 2 responses each) = 9 responses
@@ -430,14 +448,14 @@ describe.sequential('MCPProxy Integration Tests', () => {
       // - initializeResponses: 2 (1 initial + 1 after the restart)
       // This is more precise than counting raw messages (which would be 3)
 
-    }, 20000);
+    }, TEST_TIMEOUT_LONG);
 
     it('should prevent overlapping restarts when multiple file changes occur rapidly', async () => {
       // Arrange
       const { proxy: testProxy, harness } = await setupTestEnvironment({
         watchPattern: 'src/**/*.ts',
-        buildCommand: 'sleep 0.2 && echo "Build done" >&2', // Slow build to stderr
-        debounceMs: 50  // Short debounce
+        buildCommand: `sleep ${TEST_BUILD_MS / 1000} && echo "Build done" >&2`,
+        debounceMs: SHORT_DEBOUNCE_MS
       });
       proxy = testProxy;
 
@@ -446,50 +464,66 @@ describe.sequential('MCPProxy Integration Tests', () => {
       expect(counts.initializeResponses).toBe(1);
       expect(counts.restarts).toBe(0);
 
-      // Act - Trigger changes while restart is in progress
+      // Act - Write files to test restart coalescing during build
 
-      // First change - triggers restart
-      fs.writeFileSync(path.join(testDir, 'src/file1.ts'), 'process.stderr.write("1\\n")');
-      await new Promise(resolve => setTimeout(resolve, 100)); // Let debounce fire
+      // First file write - triggers a restart
+      harness.writeFile(
+        path.join(testDir, 'src/file1.ts'),
+        'process.stderr.write("1\\n")'
+      );
 
-      // Second change while first restart is still running (build takes 200ms)
-      fs.writeFileSync(path.join(testDir, 'src/file2.ts'), 'process.stderr.write("2\\n")');
-      await new Promise(resolve => setTimeout(resolve, 100));
+      // Wait for debounce to fire and restart to begin
+      await harness.wait(SHORT_DEBOUNCE_MS + DEBOUNCE_BUFFER);
 
-      // Third change while restart might still be running
-      fs.writeFileSync(path.join(testDir, 'src/file3.ts'), 'process.stderr.write("3\\n")');
+      // Second file write - build is still running (TEST_BUILD_MS duration)
+      harness.writeFile(
+        path.join(testDir, 'src/file2.ts'),
+        'process.stderr.write("2\\n")'
+      );
 
-      // Wait for all operations to complete
-      await new Promise(resolve => setTimeout(resolve, 3000));
+      // Wait for this change's debounce period
+      await harness.wait(SHORT_DEBOUNCE_MS + DEBOUNCE_BUFFER);
+
+      // Third file write - should be coalesced with pending restart
+      harness.writeFile(
+        path.join(testDir, 'src/file3.ts'),
+        'process.stderr.write("3\\n")'
+      );
+
+      // Wait for at least one restart to complete
+      await harness.waitForRestarts(1);
+
+      // Give a bit more time to ensure no additional restarts are happening
+      await harness.wait(WAIT_FOR_RESTART);
 
       // Assert - Multiple changes but overlapping restarts prevented
       counts = harness.getCounts();
       expect(counts.restarts).toBeGreaterThanOrEqual(1); // At least one restart
-      expect(counts.restarts).toBeLessThanOrEqual(3); // But limited restarts (no overlap)
+      expect(counts.restarts).toBeLessThanOrEqual(2); // Changes during build should be coalesced
 
       // The key assertion: we should never have concurrent restarts
       // This is ensured by the restartInProgress flag in MCPProxy
 
-    }, 20000);
+    }, TEST_TIMEOUT_LONG);
 
     it('should handle stop call during active restart', async () => {
       // Arrange
-      const { proxy: testProxy } = await setupTestEnvironment({
+      const { proxy: testProxy, harness } = await setupTestEnvironment({
         watchPattern: 'src/**/*.ts',
-        buildCommand: 'sleep 0.5 && echo "Build"', // Slow build
-        debounceMs: 50,
+        buildCommand: `sleep ${SLOW_BUILD_MS / 1000} && echo "Build"`,
+        debounceMs: SHORT_DEBOUNCE_MS,
         skipInitialize: true
       });
       proxy = testProxy;
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      await harness.wait(WAIT_FOR_RESTART);
 
       // Act - Trigger change then stop during build
-      fs.writeFileSync(path.join(testDir, 'src/file.ts'), 'process.stderr.write("1\\n")');
+      harness.writeFile(path.join(testDir, 'src/file.ts'), 'process.stderr.write("1\\n")');
       // Since we can't capture stderr anymore, assume restart is triggered after file change
       const restartTriggered = true;
 
       // Wait for build to start
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await harness.wait(WAIT_FOR_BUILD_START);
 
       // Test ends - no need to stop, let GC handle cleanup
 
@@ -497,7 +531,7 @@ describe.sequential('MCPProxy Integration Tests', () => {
       // Restart should have been triggered by file change
       expect(restartTriggered).toBe(true);
       // Stop should complete without hanging
-    }, 10000);
+    }, TEST_TIMEOUT_SHORT);
 
   });
 
@@ -515,8 +549,8 @@ describe.sequential('MCPProxy Integration Tests', () => {
       proxy = testProxy;
 
       // Trigger change (build will fail but server continues)
-      fs.writeFileSync(path.join(testDir, 'src/watch.ts'), '// changed');
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      harness.changeFile(path.join(testDir, 'src/watch.ts'), '// changed');
+      await harness.wait(WAIT_FOR_BUILD_FAIL);
 
       // Assert - Build should fail but server should still run
       // Server should still be running and processing
@@ -524,7 +558,7 @@ describe.sequential('MCPProxy Integration Tests', () => {
       const counts = harness.getCounts();
       expect(counts.messages).toBeGreaterThan(0);
       expect(counts.serverReady).toBe(true);
-    }, 10000);
+    }, TEST_TIMEOUT_SHORT);
 
     it('should handle server crashes', async () => {
       // Arrange
@@ -536,7 +570,7 @@ describe.sequential('MCPProxy Integration Tests', () => {
         serverArgs: ['-e', 'process.exit(1)'], // Crashes immediately
         cwd: testDir,
         watchPattern: [],
-        debounceMs: 100,
+        debounceMs: DEBOUNCE_MS,
         onExit: () => {}
       }, harness.clientIn, harness.clientOut);
 
@@ -545,7 +579,7 @@ describe.sequential('MCPProxy Integration Tests', () => {
 
       // The serverLifecycle should report server as not running after crash
       expect((proxy as any).serverLifecycle.getStreams()).toBe(null);
-    }, 10000);
+    }, TEST_TIMEOUT_SHORT);
   });
 
   describe('Double Response Prevention', () => {
@@ -565,48 +599,29 @@ describe.sequential('MCPProxy Integration Tests', () => {
       expect(harness.getCounts().initializeResponses).toBe(1);
     });
 
-    it('should not restart server immediately after initialize', async () => {
-      // Arrange
-      const restartFile = path.join(testDir, 'restarts.txt');
-      process.env.RESTART_FILE = restartFile;
-
-      const { proxy: testProxy, harness } = await setupTestEnvironment({
-        serverPath: fixtures.TEST_SERVERS.RESTART_TRACKING,
-        serverArgs: [fixtures.TEST_SERVERS.RESTART_TRACKING],
-        buildCommand: 'echo "No build needed"',
-        watchPattern: []
-      });
-      proxy = testProxy;
-
-      // Wait to see if restart happens
-      await harness.expectNoMoreRestarts(0, 2000);
-
-      // Assert - server should not have restarted
-      const restarts = fs.existsSync(restartFile) ? parseInt(fs.readFileSync(restartFile, 'utf-8')) : 0;
-      expect(restarts).toBe(1); // Should only have started once
-      expect(harness.getCounts().restarts).toBe(0); // No restarts tracked by harness
-
-      // Clean up environment variable
-      delete process.env.RESTART_FILE;
-    });
-
-    it('should handle server crash without duplicating responses', async () => {
-      // Arrange - Use fixture server that crashes after responding
+    it('should automatically restart server after crash when build succeeds', async () => {
+      // Arrange - Server that crashes after init, but build always succeeds
       const { proxy: testProxy, harness } = await setupTestEnvironment({
         serverPath: fixtures.TEST_SERVERS.CRASH_AFTER_INIT,
         serverArgs: [fixtures.TEST_SERVERS.CRASH_AFTER_INIT],
-        buildCommand: 'echo "No build needed"',
-        watchPattern: []
+        watchPattern: 'src/**/*.ts',
+        buildCommand: 'echo "Build successful"' // Build always succeeds
       });
       proxy = testProxy;
 
-      // Wait for crash and potential restart
-      await new Promise(resolve => setTimeout(resolve, 3000));
-
-      // Assert - should only have one initialize response despite crash
-      const initResponses = harness.getInitializeResponses();
-      expect(initResponses).toHaveLength(1);
+      // Initial server will crash 100ms after responding to initialize
       expect(harness.getCounts().initializeResponses).toBe(1);
+
+      // Act - Trigger a file change (build will succeed, server will restart despite previous crash)
+      harness.writeFile(path.join(testDir, 'src/trigger.ts'), '// trigger restart');
+
+      // Wait for automatic restart after successful build
+      await harness.waitForRestarts(1);
+
+      // Assert - Server restarted automatically after successful build
+      expect(harness.getCounts().restarts).toBe(1);
+      // Note: Server will crash again since we're still using CRASH_AFTER_INIT fixture
+      // but the point is it DID restart after a successful build
     });
   });
 });

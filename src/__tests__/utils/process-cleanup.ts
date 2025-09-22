@@ -149,11 +149,3 @@ async function cleanupChildProcesses(pids: number[]): Promise<void> {
   }
 }
 
-/**
- * Cleanup helper for test directories
- */
-export function cleanupTestDirectory(testDir: string | null): void {
-  if (testDir && require('fs').existsSync(testDir)) {
-    require('fs').rmSync(testDir, { recursive: true, force: true });
-  }
-}

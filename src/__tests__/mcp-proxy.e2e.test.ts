@@ -3,8 +3,8 @@ import { MCPProxy } from '../mcp-proxy.js';
 import { PassThrough } from 'stream';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as os from 'os';
 import { MCPTestClient } from './utils/mcp-test-client.js';
+import { createTestDirectory, cleanupTestDirectory } from './utils/test-directory.js';
 import fixtures from './fixtures/test-fixtures.js';
 
 describe.sequential('MCPProxy E2E Tests', () => {
@@ -18,7 +18,7 @@ describe.sequential('MCPProxy E2E Tests', () => {
 
   beforeEach(async () => {
     // Create real test directory
-    testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-proxy-e2e-'));
+    testDir = createTestDirectory('mcp-proxy-e2e');
 
     // Setup real streams
     proxyStdin = new PassThrough();
@@ -39,9 +39,7 @@ describe.sequential('MCPProxy E2E Tests', () => {
     }
     proxy = null;
 
-    if (fs.existsSync(testDir)) {
-      fs.rmSync(testDir, { recursive: true, force: true });
-    }
+    cleanupTestDirectory(testDir);
   });
 
   describe('Real MCP Server Integration', () => {

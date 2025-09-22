@@ -1,5 +1,14 @@
 import { PassThrough } from 'stream';
 import { expect } from 'vitest';
+import { writeFileSync } from 'fs';
+
+// Timing constants for test harness
+const WAIT_FOR_RESPONSE = 500;    // Default time to wait for RPC response
+const POLL_INTERVAL = 50;          // Interval for polling responses
+const POLL_TIMEOUT = 100;          // Polling interval for expect.poll
+const INIT_TIMEOUT = 5000;         // Timeout for server initialization
+const RESTART_TIMEOUT = 10000;     // Default timeout for restart detection
+const RESPONSE_TIMEOUT = 1000;     // Default timeout for waitForResponse
 
 /**
  * Test harness for MCP proxy integration tests.
@@ -60,28 +69,21 @@ export class MCPTestHarness {
 
     // Wait for initialize response
     await expect.poll(() => this.serverReady, {
-      interval: 100,
-      timeout: 5000
+      interval: POLL_TIMEOUT,
+      timeout: INIT_TIMEOUT
     }).toBe(true);
   }
 
   /**
    * Wait for a specific number of restarts
    */
-  async waitForRestarts(count: number, timeout = 10000) {
+  async waitForRestarts(count: number, timeout = RESTART_TIMEOUT) {
     await expect.poll(() => this.restartCount, {
-      interval: 100,
+      interval: POLL_TIMEOUT,
       timeout
     }).toBeGreaterThanOrEqual(count);
   }
 
-  /**
-   * Wait and verify no restarts happen
-   */
-  async expectNoMoreRestarts(currentCount: number, waitMs = 1000) {
-    await new Promise(resolve => setTimeout(resolve, waitMs));
-    expect(this.restartCount).toBe(currentCount);
-  }
 
   /**
    * Get counts for assertions
@@ -124,7 +126,7 @@ export class MCPTestHarness {
     this.clientIn.write(request);
 
     // Wait a bit for the response to arrive
-    await new Promise(resolve => setTimeout(resolve, 500));
+    await new Promise(resolve => setTimeout(resolve, WAIT_FOR_RESPONSE));
 
     // Find and return the response
     return this.allMessages.find(msg => msg.id === id);
@@ -144,7 +146,7 @@ export class MCPTestHarness {
     this.clientIn.write(request);
 
     // Wait a bit for the response to arrive
-    await new Promise(resolve => setTimeout(resolve, 500));
+    await new Promise(resolve => setTimeout(resolve, WAIT_FOR_RESPONSE));
 
     // Find and return the response
     return this.allMessages.find(msg => msg.id === id);
@@ -169,14 +171,14 @@ export class MCPTestHarness {
   /**
    * Wait for a response with a specific ID
    */
-  async waitForResponse(id: number, timeout = 1000): Promise<any> {
+  async waitForResponse(id: number, timeout = RESPONSE_TIMEOUT): Promise<any> {
     const start = Date.now();
     while (Date.now() - start < timeout) {
       const response = this.allMessages.find(msg => msg.id === id);
       if (response) {
         return response;
       }
-      await new Promise(resolve => setTimeout(resolve, 50));
+      await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL));
     }
     return null;
   }
@@ -188,4 +190,27 @@ export class MCPTestHarness {
     const responses = this.allMessages.filter(msg => msg.id && msg.result);
     return responses[responses.length - 1];
   }
+
+  /**
+   * Create a new file (triggers 'add' event in file watcher).
+   */
+  writeFile(filePath: string, content: string) {
+    writeFileSync(filePath, content);
+  }
+
+  /**
+   * Modify an existing file (triggers 'change' event in file watcher).
+   */
+  changeFile(filePath: string, content: string) {
+    writeFileSync(filePath, content);
+  }
+
+/**
+   * Wait for a specific duration (makes test timings explicit)
+   */
+  async wait(ms: number) {
+    await new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+
 }
