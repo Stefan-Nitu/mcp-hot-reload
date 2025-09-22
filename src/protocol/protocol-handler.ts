@@ -396,20 +396,4 @@ export class ProtocolHandler {
     this.messageQueue = [];
     this.partialMessage = '';
   }
-
-  // Global error handlers (called from index.ts handlers)
-  handleUncaughtError(error: Error): void {
-    log.error({ error }, 'Uncaught error in protocol handler');
-    // Don't crash - try to continue operating
-  }
-
-  handleUnhandledRejection(error: Error): void {
-    log.error({ error }, 'Unhandled rejection in protocol handler');
-    // Don't crash - try to continue operating
-  }
-
-  handleStdinEnd(): void {
-    log.info('Stdin ended, shutting down');
-    this.shutdown();
-  }
 }

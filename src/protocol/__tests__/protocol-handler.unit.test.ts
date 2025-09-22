@@ -427,62 +427,6 @@ describe('ProtocolHandler', () => {
     });
   });
 
-  describe('Global Error Handling', () => {
-    it('should handle uncaught exceptions without crashing', () => {
-      // NEW TEST: Proxy resilience to internal errors
-      // WHY: Proxy must be resilient to unexpected errors
-
-      // Arrange
-      handler.connectServer(serverConnection);
-      const serverData: string[] = [];
-      serverIn.on('data', chunk => serverData.push(chunk.toString()));
-
-      // Initialize session first
-      clientIn.write(createInitializeRequest(1));
-      (serverOut as PassThrough).write(createInitializeResponse(1));
-
-      const error = new Error('Unexpected error in message processing');
-
-      // Act - Simulate internal error
-      handler.handleUncaughtError(error);
-
-      // Assert - Handler still functional
-      clientIn.write(createRequest(2, 'test'));
-      expect(serverData).toHaveLength(2); // init + test
-    });
-
-    it('should handle unhandled promise rejections', () => {
-      // NEW TEST: Resilience to async errors
-      // WHY: Async errors shouldn't crash the proxy
-
-      // Arrange
-      handler.connectServer(serverConnection);
-      const rejection = new Error('Unhandled async error');
-
-      // Act
-      handler.handleUnhandledRejection(rejection);
-
-      // Assert - Still operational
-      expect(handler.getSessionState()).toBeDefined();
-    });
-
-    it('should cleanup on stdin end', () => {
-      // NEW TEST: Clean shutdown when client disconnects
-      // WHY: Clean shutdown when client disconnects
-
-      // Arrange
-      const shutdownSpy = vi.spyOn(handler, 'shutdown');
-      handler.connectServer(serverConnection);
-
-      // Act - Simulate stdin end
-      handler.handleStdinEnd();
-
-      // Assert
-      expect(shutdownSpy).toHaveBeenCalled();
-      expect(serverConnection.dispose).toHaveBeenCalled();
-    });
-  });
-
   describe('Multiple Message Handling (from MessageRouter)', () => {
     it('should handle multiple messages in one chunk', () => {
       // EVOLUTION: Enhanced with proper parsing and individual handling
