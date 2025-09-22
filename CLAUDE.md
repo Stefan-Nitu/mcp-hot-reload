@@ -16,10 +16,12 @@ This means you can test changes immediately through the MCP tools without runnin
 **DO NOT WAIT TO BE ASKED. DO NOT PROCEED WITHOUT READING THEM FIRST.**
 
 ### Required Documents (READ NOW IN THIS ORDER):
-1. `docs/TESTING.md` - MCP server testing strategies with Vitest
-2. `docs/DEVELOPMENT-NOTES.md` - Critical lessons learned and known issues
+1. `README.md` - Complete project overview, architecture, and usage
+2. `docs/TESTING.md` - MCP server testing strategies with Vitest
+3. `docs/DEVELOPMENT-NOTES.md` - Critical lessons learned and known issues
 
 ### Verification Checklist:
+- [ ] I have read `README.md` completely
 - [ ] I have read `docs/TESTING.md` completely
 - [ ] I have read `docs/DEVELOPMENT-NOTES.md` completely
 - [ ] I understand the testing approach (unit/integration/E2E separation, Vitest patterns)
