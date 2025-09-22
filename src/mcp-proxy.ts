@@ -295,15 +295,35 @@ export class MCPProxy {
     const pendingRequest = this.sessionTracker.getPendingRequest();
 
     if (pendingRequest && this.stdout.writable && !(this.stdout as any).destroyed) {
-      // Build error message
-      let errorMessage = 'MCP server crashed:';
-      if (signal) {
-        errorMessage += ` (killed by signal ${signal})`;
-      } else if (code !== null) {
+      // Build descriptive error message
+      let errorMessage = 'MCP server process terminated unexpectedly';
+
+      // Add specific exit information
+      if (signal === 'SIGSEGV') {
+        errorMessage += ' (segmentation fault - possible memory access violation)';
+      } else if (signal === 'SIGKILL') {
+        errorMessage += ' (killed forcefully - possible out of memory or manual termination)';
+      } else if (signal === 'SIGTERM') {
+        errorMessage += ' (terminated - process shutdown requested)';
+      } else if (signal === 'SIGINT') {
+        errorMessage += ' (interrupted - Ctrl+C or similar)';
+      } else if (signal) {
+        errorMessage += ` (signal: ${signal})`;
+      } else if (code === 1) {
+        errorMessage += ' (exit code 1 - general error, check server logs)';
+      } else if (code === 127) {
+        errorMessage += ' (exit code 127 - command not found)';
+      } else if (code === 130) {
+        errorMessage += ' (exit code 130 - terminated by Ctrl+C)';
+      } else if (code === 137) {
+        errorMessage += ' (exit code 137 - killed, possibly out of memory)';
+      } else if (code === 143) {
+        errorMessage += ' (exit code 143 - terminated by SIGTERM)';
+      } else if (code !== null && code !== 0) {
         errorMessage += ` (exit code ${code})`;
       }
 
-      errorMessage += ". Fix build and try again";
+      errorMessage += '. Hot-reload will attempt to restart on next file change.';
 
       // Send JSON-RPC error response to the client
       const errorResponse = {
@@ -316,7 +336,7 @@ export class MCPProxy {
             exitCode: code,
             signal: signal,
             method: pendingRequest.method,
-            info: 'The MCP server process terminated unexpectedly. Check server logs for details.'
+            info: 'Save a file to trigger rebuild and restart, or check server logs for crash details.'
           }
         }
       };

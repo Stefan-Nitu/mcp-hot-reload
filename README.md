@@ -40,6 +40,7 @@ The MCP Hot Reload tool enables seamless development of Model Context Protocol (
 Key benefits:
 - **Zero downtime development** - Changes are applied without losing your connection
 - **Session state preservation** - Maintains context across server restarts
+- **Crash recovery** - Automatically handles server crashes with helpful error messages
 - **Protocol compliance** - Properly handles MCP protocol requirements
 - **Flexible file watching** - Supports glob patterns for any programming language
 - **Smart build handling** - Automatically detects when builds are needed (supports both compiled and interpreted languages)
@@ -401,6 +402,47 @@ The hot-reload tool acts as a transparent proxy between the MCP client and your 
 6. Initialize handshake replayed
 7. Buffered messages replayed
 8. Normal operation resumes
+
+### Crash Handling
+
+The hot-reload proxy automatically detects and handles server crashes, providing detailed error information to help diagnose issues:
+
+#### Automatic Recovery
+- **Crash Detection**: Monitors server process for unexpected termination
+- **Error Reporting**: Sends descriptive JSON-RPC error to client with crash details
+- **Pending Request Handling**: Properly responds to any in-flight requests when crash occurs
+- **Ready for Restart**: After a crash, saving any watched file triggers rebuild and restart
+
+#### Exit Code Interpretation
+The proxy provides helpful descriptions for common exit scenarios:
+
+| Exit Condition | Description |
+|---------------|-------------|
+| SIGSEGV | Segmentation fault - memory access violation |
+| SIGKILL | Killed forcefully - possible out of memory |
+| SIGTERM | Normal termination signal |
+| Exit code 1 | General error - check server logs |
+| Exit code 127 | Command not found |
+| Exit code 137 | Killed (often out of memory) |
+| Exit code 143 | Terminated by SIGTERM |
+
+Example error response sent to client:
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 123,
+  "error": {
+    "code": -32603,
+    "message": "MCP server process terminated unexpectedly (exit code 1 - general error, check server logs). Hot-reload will attempt to restart on next file change.",
+    "data": {
+      "exitCode": 1,
+      "signal": null,
+      "method": "tools/call",
+      "info": "Save a file to trigger rebuild and restart, or check server logs for crash details."
+    }
+  }
+}
+```
 
 ## API Reference
 
