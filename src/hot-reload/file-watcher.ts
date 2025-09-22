@@ -90,12 +90,6 @@ export class FileWatcher {
   }
 
   private handleChange(filePath: string): void {
-    log.error({
-      filePath,
-      isAbsolute: path.isAbsolute(filePath),
-      cwd: this.config.cwd
-    }, 'handleChange called');
-
     if (!this.shouldWatchFile(filePath)) {
       log.trace({ filePath }, 'Ignoring file (not watched type)');
       return;
@@ -137,32 +131,10 @@ export class FileWatcher {
         this.filePatterns.push(absolutePath);
         const baseDir = this.extractDirFromGlob(absolutePath);
         targets.add(baseDir);
-        log.error({
-          pattern,
-          absolutePath,
-          baseDir,
-          isGlob: true,
-          cwd: this.config.cwd
-        }, 'Processing glob pattern');
       } else {
         targets.add(absolutePath);
-        log.error({
-          pattern,
-          absolutePath,
-          isGlob: false,
-          cwd: this.config.cwd
-        }, 'Processing direct path');
       }
     }
-
-    log.error({
-      patterns,
-      filePatterns: this.filePatterns,
-      watchTargets: Array.from(targets),
-      cwd: this.config.cwd,
-      platform: process.platform,
-      pathSep: path.sep
-    }, 'Extracted watch targets');
 
     return Array.from(targets);
   }
@@ -186,14 +158,7 @@ export class FileWatcher {
   private shouldWatchFile(filePath: string): boolean {
     // If we have glob patterns, use them
     if (this.filePatterns.length > 0) {
-      const matches = micromatch.isMatch(filePath, this.filePatterns);
-      log.error({
-        filePath,
-        filePatterns: this.filePatterns,
-        matches,
-        platform: process.platform
-      }, 'Checking file against patterns');
-      return matches;
+      return micromatch.isMatch(filePath, this.filePatterns);
     }
 
     // Otherwise, filter by common source extensions
