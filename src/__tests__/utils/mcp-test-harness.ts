@@ -3,16 +3,12 @@ import { expect } from 'vitest';
 
 /**
  * Test harness for MCP proxy integration tests.
- * Tracks server behaviors and provides semantic waiting methods.
+ * Tracks server behaviors through protocol messages only.
  */
 export class MCPTestHarness {
   private initializeResponses: any[] = [];
   private allMessages: any[] = [];
-  private stderrLogs: string[] = [];
   private restartCount = 0;
-  private fileChangeDetected = false;
-  private buildStarted = false;
-  private buildCompleted = false;
   private serverReady = false;
 
   constructor(
@@ -50,33 +46,6 @@ export class MCPTestHarness {
   }
 
   /**
-   * Track stderr output for detecting internal state changes
-   */
-  trackStderr(stderr: PassThrough) {
-    stderr.on('data', (chunk) => {
-      const output = chunk.toString();
-      this.stderrLogs.push(output);
-
-      // Parse common log patterns
-      if (output.includes('File change detected')) {
-        this.fileChangeDetected = true;
-      }
-      if (output.includes('starting build')) {
-        this.buildStarted = true;
-      }
-      if (output.includes('Build succeeded')) {
-        this.buildCompleted = true;
-      }
-      if (output.includes('Process ready')) {
-        this.serverReady = true;
-      }
-      if (output.includes('Re-sending initialize request')) {
-        // Restart is happening
-      }
-    });
-  }
-
-  /**
    * Send initialize request and wait for server to be ready
    */
   async initialize() {
@@ -89,25 +58,17 @@ export class MCPTestHarness {
 
     this.clientIn.write(initRequest);
 
-    // Wait for server to respond
-    await this.waitForServerReady();
-  }
-
-  /**
-   * Wait for server to be ready (responded to initialize)
-   */
-  async waitForServerReady(timeout = 5000) {
+    // Wait for initialize response
     await expect.poll(() => this.serverReady, {
       interval: 100,
-      timeout
+      timeout: 5000
     }).toBe(true);
   }
 
   /**
-   * Wait for a specific number of restarts to complete
+   * Wait for a specific number of restarts
    */
   async waitForRestarts(count: number, timeout = 10000) {
-    // Increase timeout for CI environments where file watching may be slower
     await expect.poll(() => this.restartCount, {
       interval: 100,
       timeout
@@ -115,35 +76,11 @@ export class MCPTestHarness {
   }
 
   /**
-   * Wait and verify that restart count remains at expected value (no unexpected restarts)
+   * Wait and verify no restarts happen
    */
-  async expectNoMoreRestarts(expectedCount: number, waitTime = 1000) {
-    await new Promise(resolve => setTimeout(resolve, waitTime));
-    expect(this.restartCount).toBe(expectedCount);
-  }
-
-  /**
-   * Wait for file change to be detected
-   */
-  async waitForFileChangeDetection(timeout = 5000) {
-    await expect.poll(() => this.fileChangeDetected, {
-      interval: 100,
-      timeout
-    }).toBe(true);
-    // Reset for next detection
-    this.fileChangeDetected = false;
-  }
-
-  /**
-   * Wait for build to complete
-   */
-  async waitForBuildComplete(timeout = 5000) {
-    await expect.poll(() => this.buildCompleted, {
-      interval: 100,
-      timeout
-    }).toBe(true);
-    // Reset for next build
-    this.buildCompleted = false;
+  async expectNoMoreRestarts(currentCount: number, waitMs = 1000) {
+    await new Promise(resolve => setTimeout(resolve, waitMs));
+    expect(this.restartCount).toBe(currentCount);
   }
 
   /**
@@ -153,8 +90,8 @@ export class MCPTestHarness {
     return {
       initializeResponses: this.initializeResponses.length,
       restarts: this.restartCount,
-      totalMessages: this.allMessages.length,
-      stderrLogs: this.stderrLogs.length
+      messages: this.allMessages.length,
+      serverReady: this.serverReady
     };
   }
 
@@ -173,11 +110,82 @@ export class MCPTestHarness {
   }
 
   /**
-   * Reset tracking state (useful between test phases)
+   * Send a tool call request and optionally wait for response
    */
-  resetTracking() {
-    this.fileChangeDetected = false;
-    this.buildStarted = false;
-    this.buildCompleted = false;
+  async callTool(name: string, args?: any, requestId?: number) {
+    const id = requestId ?? Date.now();
+    const request = JSON.stringify({
+      jsonrpc: '2.0',
+      id,
+      method: 'tools/call',
+      params: { name, arguments: args }
+    }) + '\n';
+
+    this.clientIn.write(request);
+
+    // Wait a bit for the response to arrive
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    // Find and return the response
+    return this.allMessages.find(msg => msg.id === id);
+  }
+
+  /**
+   * Send a tools/list request and wait for response
+   */
+  async listTools(requestId?: number) {
+    const id = requestId ?? Date.now();
+    const request = JSON.stringify({
+      jsonrpc: '2.0',
+      id,
+      method: 'tools/list'
+    }) + '\n';
+
+    this.clientIn.write(request);
+
+    // Wait a bit for the response to arrive
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    // Find and return the response
+    return this.allMessages.find(msg => msg.id === id);
+  }
+
+  /**
+   * Send a raw JSON-RPC request
+   */
+  sendRequest(method: string, params?: any, id?: number) {
+    const requestId = id ?? Date.now();
+    const request = JSON.stringify({
+      jsonrpc: '2.0',
+      id: requestId,
+      method,
+      params
+    }) + '\n';
+
+    this.clientIn.write(request);
+    return requestId;
+  }
+
+  /**
+   * Wait for a response with a specific ID
+   */
+  async waitForResponse(id: number, timeout = 1000): Promise<any> {
+    const start = Date.now();
+    while (Date.now() - start < timeout) {
+      const response = this.allMessages.find(msg => msg.id === id);
+      if (response) {
+        return response;
+      }
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    return null;
+  }
+
+  /**
+   * Get the latest response (useful for tests that send only one request)
+   */
+  getLatestResponse() {
+    const responses = this.allMessages.filter(msg => msg.id && msg.result);
+    return responses[responses.length - 1];
   }
 }

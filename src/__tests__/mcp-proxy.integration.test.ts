@@ -3,7 +3,6 @@ import { MCPProxy } from '../mcp-proxy.js';
 import { PassThrough } from 'stream';
 import * as fs from 'fs';
 import * as path from 'path';
-import chokidar from 'chokidar';
 import fixtures from './fixtures/test-fixtures.js';
 import { MCPTestHarness } from './utils/mcp-test-harness.js';
 import { cleanupTestDirectory } from './utils/process-cleanup.js';
@@ -14,7 +13,6 @@ const TEST_SERVER_PATH = fixtures.TEST_SERVERS.ALL_CONTENT_TYPES;
 describe.sequential('MCPProxy Integration Tests', () => {
   let testDir: string;
   let proxy: MCPProxy | null = null;
-  let testHarness: MCPTestHarness | null = null;
 
   beforeEach(() => {
     // Create unique test directory for each test
@@ -27,89 +25,92 @@ describe.sequential('MCPProxy Integration Tests', () => {
       proxy.cleanup();
     }
     proxy = null;
-    testHarness = null;
 
     // Clean up environment variables that might affect subsequent tests
     delete process.env.MCP_PROXY_INSTANCE;
+    delete process.env.RESTART_FILE;
 
     // Clean up test directory
     cleanupTestDirectory(testDir);
   });
 
-  describe('MCP Content Types', () => {
-    // Helper function to setup test environment with the comprehensive server
-    const setupTestEnvironment = async () => {
-      // Copy test server to test directory
-      const serverPath = path.join(testDir, 'server.js');
-      fs.copyFileSync(TEST_SERVER_PATH, serverPath);
-      fs.chmodSync(serverPath, 0o755);
+  /**
+   * Parameterized helper function to setup test environment
+   * Focuses on the most common test scenarios
+   */
+  const setupTestEnvironment = async (options: {
+    serverPath?: string;
+    serverArgs?: string[];
+    buildCommand?: string;
+    watchPattern?: string | string[];
+    debounceMs?: number;
+    skipInitialize?: boolean;
+    createDirs?: string[];
+  } = {}) => {
+    const {
+      serverPath = TEST_SERVER_PATH,
+      serverArgs = ['server.js'],
+      buildCommand = 'echo "Building"',
+      watchPattern = path.join(testDir, 'src'),
+      debounceMs = 100,
+      skipInitialize = false,
+      createDirs = []
+    } = options;
 
-      // Create src directory for watching
-      fs.mkdirSync(path.join(testDir, 'src'), { recursive: true });
+    // Copy test server to test directory
+    if (serverPath && !serverArgs[0].startsWith('-')) {
+      const destPath = path.join(testDir, 'server.js');
+      fs.copyFileSync(serverPath, destPath);
+      fs.chmodSync(destPath, 0o755);
+    }
+
+    // Create src directory for watching
+    fs.mkdirSync(path.join(testDir, 'src'), { recursive: true });
+    if (watchPattern) {
       fs.writeFileSync(path.join(testDir, 'src/dummy.ts'), '// dummy file for watching');
+    }
 
-      const clientIn = new PassThrough();
-      const clientOut = new PassThrough();
-      const capturedOutput: string[] = [];
+    // Create any additional directories
+    for (const dir of createDirs) {
+      fs.mkdirSync(path.join(testDir, dir), { recursive: true });
+    }
 
-      clientOut.on('data', (chunk) => capturedOutput.push(chunk.toString()));
+    const harness = new MCPTestHarness(new PassThrough(), new PassThrough());
 
-      const proxy = new MCPProxy({
-        buildCommand: 'echo "Building"',
-        serverCommand: 'node',
-        serverArgs: ['server.js'],
-        cwd: testDir,
-        watchPattern: path.join(testDir, 'src'),
-        debounceMs: 100,
-        onExit: () => {}
-      }, clientIn, clientOut);
-
-      await proxy.start();
-      await new Promise(resolve => setTimeout(resolve, 1000));
-
-      // Initialize the connection
-      clientIn.write(JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'initialize',
-        params: { protocolVersion: '2024-11-05' }
-      }) + '\n');
-
-      await new Promise(resolve => setTimeout(resolve, 500));
-
-      return { proxy, clientIn, clientOut, capturedOutput };
+    const proxyConfig: any = {
+      buildCommand,
+      serverCommand: 'node',
+      serverArgs,
+      cwd: testDir,
+      debounceMs,
+      onExit: () => {}
     };
 
-    const parseResponses = (capturedOutput: string[]) => {
-      return capturedOutput
-        .map(chunk => {
-          const lines = chunk.split('\n').filter((line: string) => line.trim());
-          return lines.map((line: string) => {
-            try { return JSON.parse(line); } catch { return null; }
-          });
-        })
-        .flat()
-        .filter(Boolean);
-    };
+    if (watchPattern && (typeof watchPattern === 'string' || watchPattern.length > 0)) {
+      proxyConfig.watchPattern = watchPattern;
+    }
 
+    const proxyInstance = new MCPProxy(proxyConfig, harness.clientIn, harness.clientOut);
+
+    await proxyInstance.start();
+
+    if (!skipInitialize) {
+      await harness.initialize();
+    }
+
+    return { proxy: proxyInstance, harness };
+  };
+
+  describe('MCP Content Types', () => {
     it('should handle text content type', async () => {
       // Arrange
-      const { proxy: testProxy, clientIn, capturedOutput } = await setupTestEnvironment();
+      const { proxy: testProxy, harness } = await setupTestEnvironment();
       proxy = testProxy;
 
       // Act
-      clientIn.write(JSON.stringify({
-        jsonrpc: '2.0',
-        id: 2,
-        method: 'tools/call',
-        params: { name: 'getText', arguments: { message: 'Custom text message' } }
-      }) + '\n');
-
-      await new Promise(resolve => setTimeout(resolve, 500));
+      const textResponse = await harness.callTool('getText', { message: 'Custom text message' }, 2);
 
       // Assert
-      const responses = parseResponses(capturedOutput);
-      const textResponse = responses.find(r => r.id === 2);
       expect(textResponse).toBeDefined();
       expect(textResponse?.result?.content).toHaveLength(1);
       expect(textResponse?.result?.content[0].type).toBe('text');
@@ -118,22 +119,13 @@ describe.sequential('MCPProxy Integration Tests', () => {
 
     it('should handle image content type', async () => {
       // Arrange
-      const { proxy: testProxy, clientIn, capturedOutput } = await setupTestEnvironment();
+      const { proxy: testProxy, harness } = await setupTestEnvironment();
       proxy = testProxy;
 
       // Act
-      clientIn.write(JSON.stringify({
-        jsonrpc: '2.0',
-        id: 2,
-        method: 'tools/call',
-        params: { name: 'getImage' }
-      }) + '\n');
-
-      await new Promise(resolve => setTimeout(resolve, 500));
+      const imageResponse = await harness.callTool('getImage', undefined, 2);
 
       // Assert
-      const responses = parseResponses(capturedOutput);
-      const imageResponse = responses.find(r => r.id === 2);
       expect(imageResponse).toBeDefined();
       expect(imageResponse?.result?.content).toHaveLength(1);
       expect(imageResponse?.result?.content[0].type).toBe('image');
@@ -143,22 +135,13 @@ describe.sequential('MCPProxy Integration Tests', () => {
 
     it('should handle resource_link content type', async () => {
       // Arrange
-      const { proxy: testProxy, clientIn, capturedOutput } = await setupTestEnvironment();
+      const { proxy: testProxy, harness } = await setupTestEnvironment();
       proxy = testProxy;
 
       // Act
-      clientIn.write(JSON.stringify({
-        jsonrpc: '2.0',
-        id: 2,
-        method: 'tools/call',
-        params: { name: 'getResourceLinks' }
-      }) + '\n');
-
-      await new Promise(resolve => setTimeout(resolve, 500));
+      const linksResponse = await harness.callTool('getResourceLinks', undefined, 2);
 
       // Assert
-      const responses = parseResponses(capturedOutput);
-      const linksResponse = responses.find(r => r.id === 2);
       expect(linksResponse).toBeDefined();
       expect(linksResponse?.result?.content).toHaveLength(4); // 1 text + 3 links
 
@@ -175,22 +158,13 @@ describe.sequential('MCPProxy Integration Tests', () => {
 
     it('should handle embedded resource content type', async () => {
       // Arrange
-      const { proxy: testProxy, clientIn, capturedOutput } = await setupTestEnvironment();
+      const { proxy: testProxy, harness } = await setupTestEnvironment();
       proxy = testProxy;
 
       // Act
-      clientIn.write(JSON.stringify({
-        jsonrpc: '2.0',
-        id: 2,
-        method: 'tools/call',
-        params: { name: 'getEmbeddedResource' }
-      }) + '\n');
-
-      await new Promise(resolve => setTimeout(resolve, 500));
+      const resourceResponse = await harness.callTool('getEmbeddedResource', undefined, 2);
 
       // Assert
-      const responses = parseResponses(capturedOutput);
-      const resourceResponse = responses.find(r => r.id === 2);
       expect(resourceResponse).toBeDefined();
       expect(resourceResponse?.result?.content).toHaveLength(1);
 
@@ -205,22 +179,13 @@ describe.sequential('MCPProxy Integration Tests', () => {
 
     it('should handle structuredContent (JSON) response', async () => {
       // Arrange
-      const { proxy: testProxy, clientIn, capturedOutput } = await setupTestEnvironment();
+      const { proxy: testProxy, harness } = await setupTestEnvironment();
       proxy = testProxy;
 
       // Act
-      clientIn.write(JSON.stringify({
-        jsonrpc: '2.0',
-        id: 2,
-        method: 'tools/call',
-        params: { name: 'getStructuredData' }
-      }) + '\n');
-
-      await new Promise(resolve => setTimeout(resolve, 500));
+      const weatherResponse = await harness.callTool('getStructuredData', undefined, 2);
 
       // Assert
-      const responses = parseResponses(capturedOutput);
-      const weatherResponse = responses.find(r => r.id === 2);
       expect(weatherResponse).toBeDefined();
       expect(weatherResponse?.result?.content).toHaveLength(1);
 
@@ -240,22 +205,13 @@ describe.sequential('MCPProxy Integration Tests', () => {
 
     it('should handle mixed content types in single response', async () => {
       // Arrange
-      const { proxy: testProxy, clientIn, capturedOutput } = await setupTestEnvironment();
+      const { proxy: testProxy, harness } = await setupTestEnvironment();
       proxy = testProxy;
 
       // Act
-      clientIn.write(JSON.stringify({
-        jsonrpc: '2.0',
-        id: 2,
-        method: 'tools/call',
-        params: { name: 'getMixedContent' }
-      }) + '\n');
-
-      await new Promise(resolve => setTimeout(resolve, 500));
+      const mixedResponse = await harness.callTool('getMixedContent', undefined, 2);
 
       // Assert
-      const responses = parseResponses(capturedOutput);
-      const mixedResponse = responses.find(r => r.id === 2);
       expect(mixedResponse).toBeDefined();
       expect(mixedResponse?.result?.content).toHaveLength(4);
 
@@ -273,21 +229,13 @@ describe.sequential('MCPProxy Integration Tests', () => {
 
     it('should list all available tools', async () => {
       // Arrange
-      const { proxy: testProxy, clientIn, capturedOutput } = await setupTestEnvironment();
+      const { proxy: testProxy, harness } = await setupTestEnvironment();
       proxy = testProxy;
 
       // Act
-      clientIn.write(JSON.stringify({
-        jsonrpc: '2.0',
-        id: 2,
-        method: 'tools/list'
-      }) + '\n');
-
-      await new Promise(resolve => setTimeout(resolve, 500));
+      const toolsResponse = await harness.listTools(2);
 
       // Assert
-      const responses = parseResponses(capturedOutput);
-      const toolsResponse = responses.find(r => r.id === 2);
       expect(toolsResponse).toBeDefined();
       expect(toolsResponse?.result?.tools).toBeDefined();
       expect(toolsResponse?.result?.tools).toHaveLength(7);
@@ -306,131 +254,37 @@ describe.sequential('MCPProxy Integration Tests', () => {
   describe('Server Restart and File Watching', () => {
     it('should restart server on file changes', async () => {
       // Arrange
-      const serverPath = path.join(testDir, 'server.js');
-      fs.copyFileSync(TEST_SERVER_PATH, serverPath);
-      fs.chmodSync(serverPath, 0o755);
+      const { proxy: testProxy, harness } = await setupTestEnvironment({
+        watchPattern: 'src'  // Watch the src directory
+      });
+      proxy = testProxy;
 
-      // Only create the directory, not the file yet
-      fs.mkdirSync(path.join(testDir, 'src'), { recursive: true });
+      const initialMessageCount = harness.getAllMessages().length;
 
-      const clientIn = new PassThrough();
-      const clientOut = new PassThrough();
-
-      const outputs: string[] = [];
-      clientOut.on('data', (chunk) => outputs.push(chunk.toString()));
-
-      proxy = new MCPProxy({
-        buildCommand: 'echo "Building"',
-        serverCommand: 'node',
-        serverArgs: ['server.js'],
-        cwd: testDir,
-        watchPattern: 'src',  // Watch the src directory (globs not supported in chokidar v4)
-        debounceMs: 100,
-        onExit: () => {}
-      }, clientIn, clientOut);
-
-      await proxy.start();
-      await new Promise(resolve => setTimeout(resolve, 1000));
-
-      // Send initial initialize request
-      const initRequest = JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'initialize',
-        params: {}
-      }) + '\n';
-      clientIn.write(initRequest);
-      await new Promise(resolve => setTimeout(resolve, 500));
-
-      const initialOutputs = outputs.length;
-
-      // Act - create a new file (should trigger 'add' event)
-      const watchFile = path.join(testDir, 'src/watch.ts');
-      fs.writeFileSync(watchFile, '// initial content');
-      await new Promise(resolve => setTimeout(resolve, 1000));
-
-      // Now modify it (should trigger 'change' event)
+      // Act - modify the dummy file (should trigger 'change' event)
+      const watchFile = path.join(testDir, 'src/dummy.ts');
       fs.writeFileSync(watchFile, '// modified content');
-      await new Promise(resolve => setTimeout(resolve, 2000)); // Wait for detection
 
-      // Send another request after restart
-      clientIn.write(initRequest);
-      await new Promise(resolve => setTimeout(resolve, 500));
+      // Wait for restart to complete
+      await harness.waitForRestarts(1);
 
-      // Assert - Server restarted (we get more outputs)
-      expect(outputs.length).toBeGreaterThan(initialOutputs);
+      // Assert - Server restarted once
+      const counts = harness.getCounts();
+      expect(counts.restarts).toBe(1);
+      expect(counts.messages).toBeGreaterThan(initialMessageCount);
     }, 10000);
-
-    it('debug: chokidar should work in Jest', async () => {
-      // Direct chokidar test
-      const watchDir = path.join(testDir, 'chokidar-test');
-      fs.mkdirSync(watchDir, { recursive: true });
-
-      const watcher = chokidar.watch(watchDir, {
-        ignoreInitial: true,
-        persistent: true,
-        usePolling: true,
-        interval: 100,
-        awaitWriteFinish: {
-          stabilityThreshold: 500,
-          pollInterval: 100
-        }
-      });
-
-      const events: string[] = [];
-      watcher.on('all', (event) => {
-        events.push(event);
-      });
-
-      await new Promise<void>(resolve => watcher.once('ready', () => resolve()));
-
-      // Create a file with a delay to ensure it's detected
-      const testFile = path.join(watchDir, 'test.txt');
-      await new Promise(resolve => setTimeout(resolve, 500));
-      fs.writeFileSync(testFile, 'content');
-
-      // Wait for polling to detect the change
-      await new Promise(resolve => setTimeout(resolve, 2000));
-
-      // Modify the file
-      fs.writeFileSync(testFile, 'modified content');
-
-      // Wait for polling to detect the modification
-      await new Promise(resolve => setTimeout(resolve, 2000));
-
-      await watcher.close();
-
-      // Should have detected at least one event (add or change)
-      expect(events.length).toBeGreaterThan(0);
-    }, 20000);
 
     it('should support glob patterns for file watching', async () => {
       // Arrange
-      const serverPath = path.join(testDir, 'server.js');
-      fs.copyFileSync(TEST_SERVER_PATH, serverPath);
-      fs.chmodSync(serverPath, 0o755);
-      fs.mkdirSync(path.join(testDir, 'src'), { recursive: true });
-      fs.mkdirSync(path.join(testDir, 'lib'), { recursive: true });
-
-      testHarness = new MCPTestHarness(new PassThrough(), new PassThrough());
-
-      proxy = new MCPProxy({
-        serverCommand: 'node',
-        serverArgs: ['server.js'],
-        cwd: testDir,
-        buildCommand: 'echo "Build done" >&2',
+      const { proxy: testProxy, harness } = await setupTestEnvironment({
         watchPattern: ['./src/**/*.py', './lib/**/*.js'],
-        debounceMs: 100,
-        onExit: () => {}
-      }, testHarness.clientIn, testHarness.clientOut);
-
-      await proxy.start();
-
-      // Initialize and wait for server to be ready
-      await testHarness.initialize();
+        buildCommand: 'echo "Build done" >&2',
+        createDirs: ['lib']  // Create lib directory in addition to src
+      });
+      proxy = testProxy;
 
       // Verify initial state
-      let counts = testHarness.getCounts();
+      let counts = harness.getCounts();
       expect(counts.initializeResponses).toBe(1);
       expect(counts.restarts).toBe(0);
 
@@ -440,16 +294,16 @@ describe.sequential('MCPProxy Integration Tests', () => {
       fs.writeFileSync(path.join(testDir, 'src/index.ts'), 'process.stderr.write("ts\\n")');
 
       // Wait and verify no restart happened
-      await testHarness.expectNoMoreRestarts(0, 500);
-      counts = testHarness.getCounts();
+      await harness.expectNoMoreRestarts(0, 500);
+      counts = harness.getCounts();
       expect(counts.restarts).toBe(0); // No restart
 
       // Python files in src SHOULD trigger
       fs.writeFileSync(path.join(testDir, 'src/main.py'), 'print("hello")');
 
       // Wait for restart to complete
-      await testHarness.waitForRestarts(1);
-      counts = testHarness.getCounts();
+      await harness.waitForRestarts(1);
+      counts = harness.getCounts();
       expect(counts.restarts).toBe(1);
       expect(counts.initializeResponses).toBe(2); // Initial + 1 restart
 
@@ -457,8 +311,8 @@ describe.sequential('MCPProxy Integration Tests', () => {
       fs.writeFileSync(path.join(testDir, 'lib/utils.js'), 'module.exports = {}');
 
       // Wait for another restart
-      await testHarness.waitForRestarts(2);
-      counts = testHarness.getCounts();
+      await harness.waitForRestarts(2);
+      counts = harness.getCounts();
       expect(counts.restarts).toBe(2);
       expect(counts.initializeResponses).toBe(3); // Initial + 2 restarts
 
@@ -466,61 +320,33 @@ describe.sequential('MCPProxy Integration Tests', () => {
 
     it('simple directory watch test - CI debugging', async () => {
       // Minimal test to isolate directory watching issue in CI
-      const serverPath = path.join(testDir, 'server.js');
-      fs.copyFileSync(TEST_SERVER_PATH, serverPath);
-      fs.chmodSync(serverPath, 0o755);
-      fs.mkdirSync(path.join(testDir, 'src'), { recursive: true });
-
-      testHarness = new MCPTestHarness(new PassThrough(), new PassThrough());
-
-      proxy = new MCPProxy({
-        serverCommand: 'node',
-        serverArgs: ['server.js'],
-        cwd: testDir,
-        buildCommand: 'echo "Build done" >&2',
+      const { proxy: testProxy, harness } = await setupTestEnvironment({
         watchPattern: 'src',  // Directory, not glob
-        debounceMs: 100,
-        onExit: () => {}
-      }, testHarness.clientIn, testHarness.clientOut);
-
-      await proxy.start();
-      await testHarness.initialize();
+        buildCommand: 'echo "Build done" >&2'
+      });
+      proxy = testProxy;
 
       // Write a TypeScript file
       fs.writeFileSync(path.join(testDir, 'src/test.ts'), 'console.log("test")');
 
       // Wait for restart
-      await testHarness.waitForRestarts(1);
+      await harness.waitForRestarts(1);
 
       // Verify restart happened
-      const counts = testHarness.getCounts();
+      const counts = harness.getCounts();
       expect(counts.restarts).toBe(1);
     }, 20000);
 
     it('should only restart for TypeScript files, not other file types', async () => {
       // Arrange
-      const serverPath = path.join(testDir, 'server.js');
-      fs.copyFileSync(TEST_SERVER_PATH, serverPath);
-      fs.chmodSync(serverPath, 0o755);
-      fs.mkdirSync(path.join(testDir, 'src'), { recursive: true });
-
-      testHarness = new MCPTestHarness(new PassThrough(), new PassThrough());
-
-      proxy = new MCPProxy({
-        serverCommand: 'node',
-        serverArgs: ['server.js'],
-        cwd: testDir,
-        buildCommand: 'echo "Build done" >&2',
+      const { proxy: testProxy, harness } = await setupTestEnvironment({
         watchPattern: 'src',
-        debounceMs: 100,
-        onExit: () => {}
-      }, testHarness.clientIn, testHarness.clientOut);
-
-      await proxy.start();
-      await testHarness.initialize();
+        buildCommand: 'echo "Build done" >&2'
+      });
+      proxy = testProxy;
 
       // Verify initial state
-      let counts = testHarness.getCounts();
+      let counts = harness.getCounts();
       expect(counts.initializeResponses).toBe(1);
       expect(counts.restarts).toBe(0);
 
@@ -532,8 +358,8 @@ describe.sequential('MCPProxy Integration Tests', () => {
       fs.writeFileSync(path.join(testDir, 'src/styles.css'), 'body {}');
 
       // Wait and verify no restart happened
-      await testHarness.expectNoMoreRestarts(0, 500);
-      counts = testHarness.getCounts();
+      await harness.expectNoMoreRestarts(0, 500);
+      counts = harness.getCounts();
       expect(counts.restarts).toBe(0); // No restart
 
       // TypeScript files SHOULD trigger restarts
@@ -546,8 +372,8 @@ describe.sequential('MCPProxy Integration Tests', () => {
       fs.closeSync(fd);
 
       // Wait for restart to complete
-      await testHarness.waitForRestarts(1);
-      counts = testHarness.getCounts();
+      await harness.waitForRestarts(1);
+      counts = harness.getCounts();
       expect(counts.restarts).toBe(1);
       expect(counts.initializeResponses).toBe(2); // Initial + 1 restart
 
@@ -555,28 +381,14 @@ describe.sequential('MCPProxy Integration Tests', () => {
 
     it('should coalesce multiple rapid file changes into a single restart', async () => {
       // Arrange
-      const serverPath = path.join(testDir, 'server.js');
-      fs.copyFileSync(TEST_SERVER_PATH, serverPath);
-      fs.chmodSync(serverPath, 0o755);
-      fs.mkdirSync(path.join(testDir, 'src'), { recursive: true });
-
-      testHarness = new MCPTestHarness(new PassThrough(), new PassThrough());
-
-      proxy = new MCPProxy({
-        serverCommand: 'node',
-        serverArgs: ['server.js'],
-        cwd: testDir,
-        buildCommand: 'echo "Build done" >&2',
+      const { proxy: testProxy, harness } = await setupTestEnvironment({
         watchPattern: 'src/**/*.ts',
-        debounceMs: 100, // Short debounce for testing
-        onExit: () => {}
-      }, testHarness.clientIn, testHarness.clientOut);
-
-      await proxy.start();
-      await testHarness.initialize();
+        buildCommand: 'echo "Build done" >&2'
+      });
+      proxy = testProxy;
 
       // Verify initial state
-      let counts = testHarness.getCounts();
+      let counts = harness.getCounts();
       expect(counts.initializeResponses).toBe(1);
       expect(counts.restarts).toBe(0);
 
@@ -593,10 +405,10 @@ describe.sequential('MCPProxy Integration Tests', () => {
       fs.writeFileSync(path.join(testDir, 'src/file4.ts'), 'process.stderr.write("4\\n")');
 
       // Wait for exactly ONE restart (coalesced)
-      await testHarness.waitForRestarts(1);
+      await harness.waitForRestarts(1);
 
       // Assert - Should have coalesced into single restart
-      counts = testHarness.getCounts();
+      counts = harness.getCounts();
       expect(counts.restarts).toBe(1); // Only 1 restart despite 4 file changes
       expect(counts.initializeResponses).toBe(2); // Initial + 1 restart
 
@@ -622,28 +434,15 @@ describe.sequential('MCPProxy Integration Tests', () => {
 
     it('should prevent overlapping restarts when multiple file changes occur rapidly', async () => {
       // Arrange
-      const serverPath = path.join(testDir, 'server.js');
-      fs.copyFileSync(TEST_SERVER_PATH, serverPath);
-      fs.chmodSync(serverPath, 0o755);
-      fs.mkdirSync(path.join(testDir, 'src'), { recursive: true });
-
-      testHarness = new MCPTestHarness(new PassThrough(), new PassThrough());
-
-      proxy = new MCPProxy({
-        serverCommand: 'node',
-        serverArgs: ['server.js'],
-        cwd: testDir,
-        buildCommand: 'sleep 0.2 && echo "Build done" >&2', // Slow build to stderr
+      const { proxy: testProxy, harness } = await setupTestEnvironment({
         watchPattern: 'src/**/*.ts',
-        debounceMs: 50, // Short debounce
-        onExit: () => {}
-      }, testHarness.clientIn, testHarness.clientOut);
-
-      await proxy.start();
-      await testHarness.initialize();
+        buildCommand: 'sleep 0.2 && echo "Build done" >&2', // Slow build to stderr
+        debounceMs: 50  // Short debounce
+      });
+      proxy = testProxy;
 
       // Verify initial state
-      let counts = testHarness.getCounts();
+      let counts = harness.getCounts();
       expect(counts.initializeResponses).toBe(1);
       expect(counts.restarts).toBe(0);
 
@@ -664,7 +463,7 @@ describe.sequential('MCPProxy Integration Tests', () => {
       await new Promise(resolve => setTimeout(resolve, 3000));
 
       // Assert - Multiple changes but overlapping restarts prevented
-      counts = testHarness.getCounts();
+      counts = harness.getCounts();
       expect(counts.restarts).toBeGreaterThanOrEqual(1); // At least one restart
       expect(counts.restarts).toBeLessThanOrEqual(3); // But limited restarts (no overlap)
 
@@ -675,26 +474,13 @@ describe.sequential('MCPProxy Integration Tests', () => {
 
     it('should handle stop call during active restart', async () => {
       // Arrange
-      const serverPath = path.join(testDir, 'server.js');
-      fs.copyFileSync(TEST_SERVER_PATH, serverPath);
-      fs.chmodSync(serverPath, 0o755);
-
-      fs.mkdirSync(path.join(testDir, 'src'), { recursive: true });
-
-      const clientIn = new PassThrough();
-      const clientOut = new PassThrough();
-
-      proxy = new MCPProxy({
-        serverCommand: 'node',
-        serverArgs: ['server.js'],
-        cwd: testDir,
-        buildCommand: 'sleep 0.5 && echo "Build"', // Slow build
+      const { proxy: testProxy } = await setupTestEnvironment({
         watchPattern: 'src/**/*.ts',
+        buildCommand: 'sleep 0.5 && echo "Build"', // Slow build
         debounceMs: 50,
-        onExit: () => {}
-      }, clientIn, clientOut);
-
-      await proxy.start();
+        skipInitialize: true
+      });
+      proxy = testProxy;
       await new Promise(resolve => setTimeout(resolve, 1000));
 
       // Act - Trigger change then stop during build
@@ -718,71 +504,41 @@ describe.sequential('MCPProxy Integration Tests', () => {
   describe('Error Handling', () => {
     it('should continue running after build failures and wait for fixes', async () => {
       // Arrange
-      const serverPath = path.join(testDir, 'server.js');
-      fs.copyFileSync(TEST_SERVER_PATH, serverPath);
-      fs.chmodSync(serverPath, 0o755);
-
+      // Create the watch file before setupTestEnvironment creates src directory
       fs.mkdirSync(path.join(testDir, 'src'), { recursive: true });
       fs.writeFileSync(path.join(testDir, 'src/watch.ts'), '// initial');
 
-      const clientIn = new PassThrough();
-      const clientOut = new PassThrough();
-
-      const outputs: string[] = [];
-      clientOut.on('data', (chunk) => outputs.push(chunk.toString()));
-
-      proxy = new MCPProxy({
+      const { proxy: testProxy, harness } = await setupTestEnvironment({
         buildCommand: 'exit 1', // Always fails
-        serverCommand: 'node',
-        serverArgs: ['server.js'],
-        cwd: testDir,
-        watchPattern: path.join(testDir, 'src'),
-        debounceMs: 100,
-        onExit: () => {}
-      }, clientIn, clientOut);
-
-      // Act
-      await proxy.start();
-      await new Promise(resolve => setTimeout(resolve, 1000));
-
-      // Send initialize request
-      const initRequest = JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'initialize',
-        params: {}
-      }) + '\n';
-      clientIn.write(initRequest);
-      await new Promise(resolve => setTimeout(resolve, 500));
+        watchPattern: path.join(testDir, 'src')
+      });
+      proxy = testProxy;
 
       // Trigger change (build will fail but server continues)
       fs.writeFileSync(path.join(testDir, 'src/watch.ts'), '// changed');
       await new Promise(resolve => setTimeout(resolve, 2000));
 
-      // Send another request - server should still respond despite build failure
-      clientIn.write(initRequest);
-      await new Promise(resolve => setTimeout(resolve, 500));
-
       // Assert - Build should fail but server should still run
-
       // Server should still be running and processing
       expect(proxy).toBeDefined();
-      expect(outputs.length).toBeGreaterThan(0);
+      const counts = harness.getCounts();
+      expect(counts.messages).toBeGreaterThan(0);
+      expect(counts.serverReady).toBe(true);
     }, 10000);
 
     it('should handle server crashes', async () => {
       // Arrange
-      const clientIn = new PassThrough();
-      const clientOut = new PassThrough();
-
+      const harness = new MCPTestHarness(new PassThrough(), new PassThrough());
 
       proxy = new MCPProxy({
         buildCommand: 'echo "Building"',
         serverCommand: 'node',
         serverArgs: ['-e', 'process.exit(1)'], // Crashes immediately
         cwd: testDir,
+        watchPattern: [],
+        debounceMs: 100,
         onExit: () => {}
-      }, clientIn, clientOut);
+      }, harness.clientIn, harness.clientOut);
 
       // Act & Assert - Server should fail to start
       await expect(proxy.start()).rejects.toThrow('Process exited during startup');
@@ -795,157 +551,62 @@ describe.sequential('MCPProxy Integration Tests', () => {
   describe('Double Response Prevention', () => {
     it('should not send duplicate initialize responses', async () => {
       // Arrange
-      const serverPath = fixtures.TEST_SERVERS.SIMPLE_ECHO;
-
-      const responses: string[] = [];
-      let responseCount = 0;
-
-      const clientIn = new PassThrough();
-      const clientOut = new PassThrough();
-
-      clientOut.on('data', (data) => {
-        const lines = data.toString().split('\n').filter((line: string) => line.trim());
-        lines.forEach((line: string) => {
-          try {
-            const msg = JSON.parse(line);
-            if (msg.id === 1 && msg.result) {
-              responseCount++;
-              responses.push(line);
-            }
-          } catch (e) {}
-        });
-      });
-
-      const config = {
-        serverCommand: 'node',
-        serverArgs: [serverPath],
+      const { proxy: testProxy, harness } = await setupTestEnvironment({
+        serverPath: fixtures.TEST_SERVERS.SIMPLE_ECHO,
+        serverArgs: [fixtures.TEST_SERVERS.SIMPLE_ECHO],
         buildCommand: 'echo "No build needed"',
-        watchPattern: [],
-        cwd: testDir,
-        onExit: () => {}
-      };
+        watchPattern: []
+      });
+      proxy = testProxy;
 
-      proxy = new MCPProxy(config, clientIn, clientOut);
-
-      // Act
-      await proxy.start();
-      await new Promise(resolve => setTimeout(resolve, 1000));
-
-      // Send initialize request
-      const initRequest = JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'initialize',
-        params: {}
-      }) + '\n';
-
-      clientIn.write(initRequest);
-
-      // Wait for responses
-      await new Promise(resolve => setTimeout(resolve, 1000));
-
-      // Assert - should only have one response
-      expect(responseCount).toBe(1);
-      expect(responses).toHaveLength(1);
+      // Assert - should only have one initialize response
+      const initResponses = harness.getInitializeResponses();
+      expect(initResponses).toHaveLength(1);
+      expect(harness.getCounts().initializeResponses).toBe(1);
     });
 
     it('should not restart server immediately after initialize', async () => {
       // Arrange
       const restartFile = path.join(testDir, 'restarts.txt');
-      const serverPath = fixtures.TEST_SERVERS.RESTART_TRACKING;
       process.env.RESTART_FILE = restartFile;
 
-      const clientIn = new PassThrough();
-      const clientOut = new PassThrough();
-
-      const config = {
-        serverCommand: 'node',
-        serverArgs: [serverPath],
+      const { proxy: testProxy, harness } = await setupTestEnvironment({
+        serverPath: fixtures.TEST_SERVERS.RESTART_TRACKING,
+        serverArgs: [fixtures.TEST_SERVERS.RESTART_TRACKING],
         buildCommand: 'echo "No build needed"',
-        watchPattern: [],
-        cwd: testDir,
-        onExit: () => {}
-      };
-
-      proxy = new MCPProxy(config, clientIn, clientOut);
-
-      // Act
-      await proxy.start();
-      await new Promise(resolve => setTimeout(resolve, 1000));
-
-      // Send initialize request
-      const initRequest = JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'initialize',
-        params: {}
-      }) + '\n';
-
-      clientIn.write(initRequest);
+        watchPattern: []
+      });
+      proxy = testProxy;
 
       // Wait to see if restart happens
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      await harness.expectNoMoreRestarts(0, 2000);
 
       // Assert - server should not have restarted
       const restarts = fs.existsSync(restartFile) ? parseInt(fs.readFileSync(restartFile, 'utf-8')) : 0;
       expect(restarts).toBe(1); // Should only have started once
+      expect(harness.getCounts().restarts).toBe(0); // No restarts tracked by harness
 
       // Clean up environment variable
       delete process.env.RESTART_FILE;
     });
 
     it('should handle server crash without duplicating responses', async () => {
-      // Arrange
-      const responses: string[] = [];
-
-      const clientIn = new PassThrough();
-      const clientOut = new PassThrough();
-
-      clientOut.on('data', (data) => {
-        const lines = data.toString().split('\n').filter((line: string) => line.trim());
-        lines.forEach((line: string) => {
-          try {
-            const msg = JSON.parse(line);
-            if (msg.id === 1 && msg.result) {
-              responses.push(line);
-            }
-          } catch (e) {}
-        });
-      });
-
-      // Use fixture server that crashes after responding
-      const serverPath = fixtures.TEST_SERVERS.CRASH_AFTER_INIT;
-
-      const config = {
-        serverCommand: 'node',
-        serverArgs: [serverPath],
+      // Arrange - Use fixture server that crashes after responding
+      const { proxy: testProxy, harness } = await setupTestEnvironment({
+        serverPath: fixtures.TEST_SERVERS.CRASH_AFTER_INIT,
+        serverArgs: [fixtures.TEST_SERVERS.CRASH_AFTER_INIT],
         buildCommand: 'echo "No build needed"',
-        watchPattern: [],
-        cwd: testDir,
-        onExit: () => {}
-      };
-
-      proxy = new MCPProxy(config, clientIn, clientOut);
-
-      // Act
-      await proxy.start();
-      await new Promise(resolve => setTimeout(resolve, 1000));
-
-      // Send initialize request
-      const initRequest = JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'initialize',
-        params: {}
-      }) + '\n';
-
-      clientIn.write(initRequest);
+        watchPattern: []
+      });
+      proxy = testProxy;
 
       // Wait for crash and potential restart
       await new Promise(resolve => setTimeout(resolve, 3000));
 
-      // Assert - should only have one response
-      expect(responses.length).toBe(1);
+      // Assert - should only have one initialize response despite crash
+      const initResponses = harness.getInitializeResponses();
+      expect(initResponses).toHaveLength(1);
+      expect(harness.getCounts().initializeResponses).toBe(1);
     });
   });
 });

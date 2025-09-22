@@ -56,7 +56,6 @@ export class FileWatcher {
 
     this.watcher.on('change', (filePath) => this.handleChange(filePath));
     this.watcher.on('add', (filePath) => this.handleChange(filePath));
-    this.watcher.on('unlink', (filePath) => this.handleChange(filePath));
     this.watcher.on('error', (error) => log.error({ err: error }, 'Watcher error'));
 
     log.debug({ targets: watchTargets }, 'Started watching');
