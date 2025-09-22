@@ -1,8 +1,5 @@
 import { Readable, Writable } from 'stream';
-import { MessageRouter } from './messaging/router.js';
-import { MessageQueue } from './messaging/queue.js';
-import { MessageParser } from './messaging/parser.js';
-import { SessionTracker } from './session/tracker.js';
+import { ProtocolHandler } from './protocol/protocol-handler.js';
 import { BuildRunner } from './hot-reload/build-runner.js';
 import { FileWatcher } from './hot-reload/file-watcher.js';
 import { HotReload } from './hot-reload/hot-reload.js';
@@ -33,10 +30,9 @@ const log = createLogger('mcp-proxy');
  * - DO NOT call stdin.resume() here! MessageRouter already handles this when it attaches the 'data' listener
  */
 export class MCPProxy {
-  private messageRouter: MessageRouter;
+  private protocolHandler: ProtocolHandler;
   private serverLifecycle: McpServerLifecycle;
   private hotReload: HotReload;
-  private sessionTracker: SessionTracker;
   private config: Required<ProxyConfig>;
   private signalHandler?: () => void;
   private stdinEndHandler?: () => void;
@@ -67,15 +63,10 @@ export class MCPProxy {
 
     log.debug({ config: this.config }, 'Configuration loaded');
 
-    // Setup message routing between MCP client and MCP server
-    const messageQueue = new MessageQueue();
-    const messageParser = new MessageParser();
-    this.sessionTracker = new SessionTracker(messageParser);
-    this.messageRouter = new MessageRouter(
+    // Setup unified protocol handler
+    this.protocolHandler = new ProtocolHandler(
       this.stdin,   // From MCP client
-      this.stdout,  // To MCP client
-      messageQueue,
-      this.sessionTracker
+      this.stdout   // To MCP client
     );
 
     // Setup server lifecycle with dependency injection
@@ -139,10 +130,9 @@ export class MCPProxy {
       return;
     }
 
-    // Start server and connect streams
+    // Start server and connect using ProtocolHandler
     this.currentServerConnection = await this.serverLifecycle.start();
-    const { stdin: serverStdin, stdout: serverStdout } = this.currentServerConnection;
-    this.messageRouter.connectServer(serverStdin, serverStdout);
+    this.protocolHandler.connectServer(this.currentServerConnection);
 
     // Set up crash monitoring
     this.setupCrashMonitoring();
@@ -191,37 +181,28 @@ export class MCPProxy {
           if (buildSuccess) {
             log.info('Build succeeded, restarting server');
 
-            // Disconnect old streams
-            this.messageRouter.disconnectServer();
+            // Check if session was initialized BEFORE restart
+            const wasInitialized = this.protocolHandler.getSessionState().initialized;
+
+            // Disconnect old server
+            this.protocolHandler.disconnectServer();
 
             // Clean up old connection
             if (this.currentServerConnection) {
               this.currentServerConnection.dispose();
             }
 
-            // Restart server and get new streams
+            // Restart server and connect with ProtocolHandler
             this.currentServerConnection = await this.serverLifecycle.restart();
-            const { stdin: serverStdin, stdout: serverStdout } = this.currentServerConnection;
-
-            // Connect new streams
-            this.messageRouter.connectServer(serverStdin, serverStdout);
+            this.protocolHandler.connectServer(this.currentServerConnection);
 
             // Re-establish crash monitoring
             this.setupCrashMonitoring();
 
-            // If we have a stored initialize request, re-send it to restore session
-            const initRequest = this.sessionTracker.getInitializeRequest();
-            if (initRequest && serverStdin.writable) {
-              log.info('Re-sending initialize request after restart');
-              try {
-                serverStdin.write(initRequest);
-              } catch (error) {
-                log.error({ err: error }, 'Failed to re-send initialize request');
-              }
-            }
+            // ProtocolHandler automatically handles session restoration
+            // No need to manually re-send initialize request
 
-            // Send tools changed notification if session was initialized
-            const wasInitialized = this.sessionTracker.isInitialized();
+            // Send tools changed notification if session was initialized before restart
             if (wasInitialized && this.stdout.writable && !(this.stdout as any).destroyed) {
               const notification = {
                 jsonrpc: '2.0',
@@ -291,7 +272,10 @@ export class MCPProxy {
   }
 
   private handleServerCrash(code: number | null, signal: NodeJS.Signals | null): void {
-    // Get the pending request that was waiting for a response
+    // Delegate to ProtocolHandler which handles crash recovery
+    this.protocolHandler.handleServerCrash(code, signal);
+
+    /* OLD CODE - Kept for reference, now handled by ProtocolHandler
     const pendingRequest = this.sessionTracker.getPendingRequest();
 
     if (pendingRequest && this.stdout.writable && !(this.stdout as any).destroyed) {
@@ -344,7 +328,6 @@ export class MCPProxy {
       try {
         log.info({ pendingRequestId: pendingRequest.id }, 'Sending crash error to client');
         this.stdout.write(JSON.stringify(errorResponse) + '\n');
-        // Clear the pending request since we responded
         this.sessionTracker.clearPendingRequest();
       } catch (error) {
         log.error({ err: error }, 'Failed to send crash error to client');
@@ -352,6 +335,7 @@ export class MCPProxy {
     } else if (!pendingRequest) {
       log.info('Server crashed but no pending request to notify');
     }
+    */
   }
 
   public cleanup(): void {
