@@ -206,6 +206,23 @@ For comprehensive testing documentation, see [TESTING.md](./TESTING.md)
 
 **Known Issue**: Node.js takes ~260ms to exit when stdio streams are piped (as they are when launched by MCP clients). This is inherent to Node.js process teardown and cannot be optimized further. Even with immediate `process.exit(0)` and no cleanup, the process takes this long to terminate. The client will send SIGTERM as a fallback, but the proxy still exits cleanly with code 0.
 
+## Commit Convention
+
+This project follows [Conventional Commits](https://www.conventionalcommits.org/). Your commit messages determine the version bump:
+
+| Type | Description | Version Bump |
+|------|-------------|--------------|
+| `fix:` | Bug fixes | Patch (0.0.X) |
+| `feat:` | New features | Minor (0.X.0) |
+| `BREAKING CHANGE:` | Breaking changes | Major (X.0.0) |
+| `chore:` | Maintenance tasks | No release |
+| `docs:` | Documentation only | No release |
+| `style:` | Code style changes | No release |
+| `refactor:` | Code refactoring | No release |
+| `perf:` | Performance improvements | Patch |
+| `test:` | Test changes | No release |
+| `ci:` | CI/CD changes | No release |
+
 ## TypeScript Build Gotchas
 
 **Lesson**: The TypeScript compiler (`tsc`):
