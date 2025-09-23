@@ -20,7 +20,6 @@ export const PROXY_PATH = path.join(DIST_DIR, 'index.js');
 
 // Test server paths
 export const TEST_SERVERS = {
-  ALL_CONTENT_TYPES: path.join(SERVERS_DIR, 'all-content-types-server.js'),
   CRASH_AFTER_INIT: path.join(SERVERS_DIR, 'crash-after-init-server.js'),
   CRASH_ON_METHOD: path.join(SERVERS_DIR, 'crash-on-method-server.js'),
   EXIT_IMMEDIATELY: path.join(SERVERS_DIR, 'exit-immediately-server.js'),
