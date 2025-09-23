@@ -277,6 +277,78 @@ describe('MCPProxy Integration Tests', () => {
       expect(errorResponse.error).toBeDefined();
       expect(errorResponse.error.message).toContain('terminated unexpectedly');
     });
+
+    it('should send different error messages for subsequent requests after crash', async () => {
+      // INTEGRATION TEST: Verifies the full flow of crash handling with multiple requests
+      // WHY: Ensures proper UX - first request gets "terminated" message, later ones get "crashed earlier"
+
+      // Arrange
+      proxy = MCPProxyFactory.create({}, clientIn, clientOut);
+      await proxy.start();
+
+      // Setup crash callback capture
+      let crashCallback: (result: { code: number | null; signal: NodeJS.Signals | null }) => void;
+      (mockServerConnection.waitForCrash as any).mockReturnValue(
+        new Promise(resolve => { crashCallback = resolve; })
+      );
+
+      // Re-setup to capture crash callback
+      await proxy.start();
+
+      // Capture client output
+      const clientData: string[] = [];
+      clientOut.on('data', chunk => clientData.push(chunk.toString()));
+
+      // Act - Send first request (will be pending during crash)
+      clientIn.write(createRequest(1, 'tools/call'));
+
+      // Trigger crash with exit code 1
+      crashCallback!({ code: 1, signal: null });
+
+      // Wait for crash handling
+      await new Promise(resolve => setTimeout(resolve, 10));
+
+      // Assert - First request gets "terminated unexpectedly" message
+      expect(clientData).toHaveLength(1);
+      const firstError = JSON.parse(clientData[0]);
+      expect(firstError.id).toBe(1);
+      expect(firstError.error.message).toContain('terminated unexpectedly');
+      expect(firstError.error.data.exitCode).toBe(1);
+
+      // Clear captured data
+      clientData.length = 0;
+
+      // Act - Send second request AFTER crash
+      clientIn.write(createRequest(2, 'tools/list'));
+
+      // Wait for processing
+      await new Promise(resolve => setTimeout(resolve, 10));
+
+      // Assert - Second request gets "crashed earlier" message
+      expect(clientData).toHaveLength(1);
+      const secondError = JSON.parse(clientData[0]);
+      expect(secondError.id).toBe(2);
+      expect(secondError.error).toBeDefined();
+      expect(secondError.error.message).toContain('crashed earlier');
+      expect(secondError.error.message).toContain('exit code 1');
+      expect(secondError.error.message).toContain('Hot-reload will attempt to restart');
+
+      // Clear captured data
+      clientData.length = 0;
+
+      // Act - Send third request to confirm behavior is consistent
+      clientIn.write(createRequest(3, 'resources/list'));
+
+      // Wait for processing
+      await new Promise(resolve => setTimeout(resolve, 10));
+
+      // Assert - Third request also gets "crashed earlier" message
+      expect(clientData).toHaveLength(1);
+      const thirdError = JSON.parse(clientData[0]);
+      expect(thirdError.id).toBe(3);
+      expect(thirdError.error.message).toContain('crashed earlier');
+      expect(thirdError.error.message).not.toContain('terminated unexpectedly');
+    });
   });
 
   describe('Build and Hot-Reload Integration', () => {

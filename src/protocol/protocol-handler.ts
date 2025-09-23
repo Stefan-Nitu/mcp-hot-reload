@@ -24,6 +24,9 @@ export class ProtocolHandler {
     initializeRequest: null,
     pendingRequest: null
   };
+  private serverCrashed: boolean = false;
+  private lastCrashCode: number | null = null;
+  private lastCrashSignal: NodeJS.Signals | null = null;
 
   private serverConnection: ServerConnection | null = null;
   private messageQueue = new PriorityMessageQueue();
@@ -76,7 +79,11 @@ export class ProtocolHandler {
     this.updateSessionStateFromClient(message);
 
     // Session state DRIVES routing decision
-    if ((!this.serverConnection || !this.serverConnection.isAlive()) && message.method !== 'initialize') {
+    // Check crash state first for requests
+    if (this.serverCrashed && message.id !== undefined) {
+      // Server has crashed - send error response for requests
+      this.sendCrashErrorResponse(message.id, message.method || 'unknown', false);
+    } else if ((!this.serverConnection || !this.serverConnection.isAlive()) && message.method !== 'initialize') {
       // No server - queue non-initialize messages (initialize is stored separately for replay)
       this.queueWithPriority(message);
     } else if (!this.session.initialized && message.method && message.method !== 'initialize') {
@@ -132,6 +139,9 @@ export class ProtocolHandler {
     this.disconnectServer();
 
     this.serverConnection = connection;
+    this.serverCrashed = false; // Reset crash state on new connection
+    this.lastCrashCode = null;
+    this.lastCrashSignal = null;
 
     // Setup server output listener
     this.serverDataHandler = (data: Buffer) => {
@@ -260,36 +270,52 @@ export class ProtocolHandler {
   }
 
   handleServerCrash(code: number | null, signal: NodeJS.Signals | null): void {
+    // Store crash info for future requests
+    this.serverCrashed = true;
+    this.lastCrashCode = code;
+    this.lastCrashSignal = signal;
+
     // Send error response for pending request
     if (this.session.pendingRequest) {
-      const errorMessage = this.buildCrashErrorMessage(code, signal);
-      const errorResponse = {
-        jsonrpc: '2.0',
-        id: this.session.pendingRequest.id,
-        error: {
-          code: -32603,
-          message: errorMessage,
-          data: {
-            exitCode: code,
-            signal: signal,
-            method: this.session.pendingRequest.method,
-            info: 'Save a file to trigger rebuild and restart, or check server logs for crash details.'
-          }
-        }
-      };
-
-      try {
-        if (this.clientOut.writable && !(this.clientOut as any).destroyed) {
-          this.clientOut.write(JSON.stringify(errorResponse) + '\n');
-          this.session.pendingRequest = null;
-        }
-      } catch (error) {
-        log.error({ error }, 'Failed to send crash error to client');
-      }
+      this.sendCrashErrorResponse(
+        this.session.pendingRequest.id,
+        this.session.pendingRequest.method,
+        true  // This is the initial crash notification
+      );
+      this.session.pendingRequest = null;
     }
 
     // Disconnect crashed server
     this.disconnectServer();
+  }
+
+  private sendCrashErrorResponse(id: string | number, method: string, isInitialCrash: boolean = false): void {
+    const errorMessage = isInitialCrash
+      ? this.buildCrashErrorMessage(this.lastCrashCode, this.lastCrashSignal)
+      : `MCP server is not running (crashed earlier with ${translateExitCondition(this.lastCrashCode, this.lastCrashSignal)}). Hot-reload will attempt to restart on next file change.`;
+
+    const errorResponse = {
+      jsonrpc: '2.0',
+      id,
+      error: {
+        code: -32603,
+        message: errorMessage,
+        data: {
+          exitCode: this.lastCrashCode,
+          signal: this.lastCrashSignal,
+          method,
+          info: 'Save a file to trigger rebuild and restart, or check server logs for crash details.'
+        }
+      }
+    };
+
+    try {
+      if (this.clientOut.writable && !(this.clientOut as any).destroyed) {
+        this.clientOut.write(JSON.stringify(errorResponse) + '\n');
+      }
+    } catch (error) {
+      log.error({ error }, 'Failed to send crash error to client');
+    }
   }
 
   private buildCrashErrorMessage(code: number | null, signal: NodeJS.Signals | null): string {

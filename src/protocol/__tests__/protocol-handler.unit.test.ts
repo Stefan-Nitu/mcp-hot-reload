@@ -421,6 +421,45 @@ describe('ProtocolHandler', () => {
       // Assert
       expect(serverConnection.waitForCrash).toHaveBeenCalled();
     });
+
+    it('should respond with error to subsequent requests after crash (BUG TEST)', () => {
+      // TEST: Proves the bug - second request after crash gets no response
+      // EXPECTED: Should send error response for all requests after crash
+      // ACTUAL: Only the pending request gets error, subsequent requests are queued
+
+      // Arrange
+      handler.connectServer(serverConnection);
+      const clientData: string[] = [];
+      clientOut.on('data', chunk => clientData.push(chunk.toString()));
+
+      // Send first request (will be pending during crash)
+      clientIn.write('{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"tool":"test"}}\n');
+
+      // Act - Trigger crash
+      handler.handleServerCrash(1, null);
+
+      // Assert - First request gets error response
+      expect(clientData).toHaveLength(1);
+      const firstError = JSON.parse(clientData[0]);
+      expect(firstError.id).toBe(1);
+      expect(firstError.error).toBeDefined();
+      expect(firstError.error.message).toContain('terminated unexpectedly');
+
+      // Clear captured data
+      clientData.length = 0;
+
+      // Send second request AFTER crash
+      clientIn.write('{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}\n');
+
+      // Assert - Second request should get different error message
+      expect(clientData).toHaveLength(1);
+      const secondError = JSON.parse(clientData[0]);
+      expect(secondError.id).toBe(2);
+      expect(secondError.error).toBeDefined();
+      // Different message for post-crash requests
+      expect(secondError.error.message).toContain('crashed earlier');
+      expect(secondError.error.message).not.toContain('terminated unexpectedly');
+    });
   });
 
   describe('Stream Error Handling (from MessageRouter)', () => {
