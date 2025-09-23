@@ -275,6 +275,26 @@ describe('ProtocolHandler', () => {
       // This is testing that initialize has highest priority
     });
 
+    it('should NOT queue initialize when server unavailable (stored separately)', () => {
+      // Arrange
+      const serverData: string[] = [];
+
+      // Act - Send initialize when no server connected
+      clientIn.write(createInitializeRequest(1));
+
+      // Verify queue size before connecting
+      expect(handler.getQueueSize()).toBe(0);
+
+      // Connect server and capture what's sent
+      serverIn.on('data', chunk => serverData.push(chunk.toString()));
+      handler.connectServer(serverConnection);
+
+      // Assert - Initialize sent exactly once (from session, not queue)
+      expect(serverData.length).toBe(1);
+      expect(serverData[0]).toContain('"method":"initialize"');
+      expect(serverData[0]).toContain('"id":1');
+    });
+
     it('should handle restart with session preservation', () => {
       // NEW TEST: Shows the cohesive restart flow
       // WHY: This is the core value - seamless restarts

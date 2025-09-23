@@ -249,4 +249,53 @@ describe.sequential('MCPProxy E2E Tests', () => {
       client.cleanup();
     });
   });
+
+  describe('Initialize Duplicate Prevention', () => {
+    it('should NOT duplicate initialize when sent BEFORE server is ready', async () => {
+      // Arrange
+      const markerDir = path.join(testDir, 'markers');
+      fs.mkdirSync(markerDir, { recursive: true });
+
+      stdin = new PassThrough();
+      stdout = new PassThrough();
+
+      // Send initialize BEFORE creating proxy (simulating fast client)
+      stdin.write(createInitializeRequest(1));
+
+      proxy = MCPProxyFactory.create(
+        {
+          serverCommand: 'node',
+          serverArgs: [fixtures.TEST_SERVERS.MESSAGE_TRACKER],
+          env: { ...process.env, MARKER_DIR: markerDir },
+          cwd: testDir,
+          onExit: () => {}
+        },
+        stdin,
+        stdout
+      );
+
+      // Act - Start proxy (which starts server)
+      await proxy.start();
+
+      // Wait for processing
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      // Assert - Initialize sent exactly once
+      const markerFiles = fs.readdirSync(markerDir);
+      const initializeFiles = markerFiles.filter(f => f.includes('initialize'));
+
+      expect(initializeFiles.length).toBe(1);
+      expect(initializeFiles[0]).toBe('msg-1-initialize.txt');
+
+      // Cleanup
+      proxy.cleanup();
+      const lifecycle = (proxy as any).serverLifecycle;
+      const childProcess = lifecycle?.currentProcess;
+      if (childProcess && !childProcess.killed) {
+        childProcess.kill('SIGKILL');
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      proxy = null;
+    });
+  });
 });

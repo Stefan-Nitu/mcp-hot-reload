@@ -24,6 +24,7 @@ export const TEST_SERVERS = {
   CRASH_AFTER_INIT: path.join(SERVERS_DIR, 'crash-after-init-server.js'),
   CRASH_ON_METHOD: path.join(SERVERS_DIR, 'crash-on-method-server.js'),
   EXIT_IMMEDIATELY: path.join(SERVERS_DIR, 'exit-immediately-server.js'),
+  MESSAGE_TRACKER: path.join(SERVERS_DIR, 'message-tracker-server.js'),
   REAL_MCP: path.join(SERVERS_DIR, 'real-mcp-server.js'),
   SIGNAL_TEST: path.join(SERVERS_DIR, 'signal-test-server.js'),
   SIMPLE_ECHO: path.join(SERVERS_DIR, 'simple-echo-server.js'),

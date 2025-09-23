@@ -87,6 +87,40 @@ describe('MCPProxy Integration Tests', () => {
   });
 
   describe('Core MCPProxy + ProtocolHandler Integration', () => {
+    it('should NOT duplicate initialize when sent before server is ready', async () => {
+      // Arrange
+      // Setup server data capture BEFORE anything else
+      const serverData: string[] = [];
+      const originalStart = mockServerLifecycle.start;
+      (mockServerLifecycle.start as any).mockImplementation(async () => {
+        // Add listener before returning connection
+        mockServerConnection.stdin.on('data', chunk => serverData.push(chunk.toString()));
+        return mockServerConnection;
+      });
+
+      // Send initialize BEFORE creating proxy (simulating fast client)
+      clientIn.write(createInitializeRequest(1));
+
+      // Now create proxy
+      proxy = MCPProxyFactory.create({}, clientIn, clientOut);
+
+      // Act - Start proxy (which starts server)
+      await proxy.start();
+
+      // Give time for processing
+      await new Promise(resolve => setTimeout(resolve, 50));
+
+      // Assert - Initialize sent exactly once
+      const initializeMessages = serverData.filter(d => d.includes('"method":"initialize"'));
+      console.log('Server received messages:', serverData.length);
+      console.log('Initialize messages:', initializeMessages.length);
+      expect(initializeMessages).toHaveLength(1);
+      expect(initializeMessages[0]).toContain('"id":1');
+
+      // Restore
+      mockServerLifecycle.start = originalStart;
+    });
+
     it('should start server and establish connection through protocol handler', async () => {
       // Arrange
       proxy = MCPProxyFactory.create({}, clientIn, clientOut);

@@ -76,16 +76,17 @@ export class ProtocolHandler {
     this.updateSessionStateFromClient(message);
 
     // Session state DRIVES routing decision
-    if (!this.serverConnection || !this.serverConnection.isAlive()) {
-      // No server - queue everything
+    if ((!this.serverConnection || !this.serverConnection.isAlive()) && message.method !== 'initialize') {
+      // No server - queue non-initialize messages (initialize is stored separately for replay)
       this.queueWithPriority(message);
     } else if (!this.session.initialized && message.method && message.method !== 'initialize') {
       // Queue non-initialize messages until initialized
       this.queueWithPriority(message);
-    } else {
-      // Forward to server
+    } else if (this.serverConnection && this.serverConnection.isAlive()) {
+      // Forward to server if connected
       this.forwardToServer(message);
     }
+    // If no server and it's initialize, do nothing (already stored in session)
   }
 
   private updateSessionStateFromClient(message: ParsedMessage): void {
