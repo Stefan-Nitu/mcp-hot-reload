@@ -1,14 +1,9 @@
 import { Readable, Writable } from 'stream';
 import { ProtocolHandler } from './protocol/protocol-handler.js';
-import { BuildRunner } from './hot-reload/build-runner.js';
-import { FileWatcher } from './hot-reload/file-watcher.js';
 import { HotReload } from './hot-reload/hot-reload.js';
 import { ProxyConfig } from './types.js';
 import { createLogger } from './utils/logger.js';
 import { McpServerLifecycle } from './process/lifecycle.js';
-import { ProcessSpawner } from './process/spawner.js';
-import { ProcessTerminator } from './process/terminator.js';
-import { ProcessReadinessChecker } from './process/readiness-checker.js';
 import { ServerConnection } from './process/server-connection.js';
 
 const log = createLogger('mcp-proxy');
@@ -30,97 +25,24 @@ const log = createLogger('mcp-proxy');
  * - DO NOT call stdin.resume() here! MessageRouter already handles this when it attaches the 'data' listener
  */
 export class MCPProxy {
-  private protocolHandler: ProtocolHandler;
-  private serverLifecycle: McpServerLifecycle;
-  private hotReload: HotReload;
-  private config: Required<ProxyConfig>;
   private signalHandler?: () => void;
   private stdinEndHandler?: () => void;
   private stdinCloseHandler?: () => void;
   private currentServerConnection?: ServerConnection;
 
   constructor(
-    config: ProxyConfig = {},
+    private protocolHandler: ProtocolHandler,
+    private serverLifecycle: McpServerLifecycle,
+    private hotReload: HotReload,
+    private config: Required<ProxyConfig>,
     private stdin: Readable = process.stdin,  // Input from MCP client
     private stdout: Writable = process.stdout // Output to MCP client
   ) {
-    // Support both new names and deprecated aliases
-    const mcpServerCommand = config.mcpServerCommand || config.serverCommand || 'node';
-    const mcpServerArgs = config.mcpServerArgs || config.serverArgs || ['dist/index.js'];
-
-    this.config = {
-      buildCommand: config.buildCommand || 'npm run build',
-      watchPattern: config.watchPattern || './src',
-      debounceMs: config.debounceMs || 300,
-      mcpServerCommand,
-      mcpServerArgs,
-      serverCommand: mcpServerCommand,  // Keep for internal compatibility
-      serverArgs: mcpServerArgs,        // Keep for internal compatibility
-      cwd: config.cwd || process.cwd(),
-      env: config.env || {},
-      onExit: config.onExit || ((code) => process.exit(code))
-    };
-
     log.debug({ config: this.config }, 'Configuration loaded');
-
-    // Setup unified protocol handler
-    this.protocolHandler = new ProtocolHandler(
-      this.stdin,   // From MCP client
-      this.stdout   // To MCP client
-    );
-
-    // Setup server lifecycle with dependency injection
-    const spawner = new ProcessSpawner();
-    const readinessChecker = new ProcessReadinessChecker({
-      checkIntervalMs: 50,
-      timeoutMs: 2000,
-      settleDelayMs: 100
-    });
-    const restartTerminator = new ProcessTerminator({
-      closeStdin: false,
-      gracePeriodMs: 0,
-      forcePeriodMs: 100,
-      zombieTimeoutMs: 500,
-      throwOnZombie: true
-    });
-
-    this.serverLifecycle = new McpServerLifecycle(
-      {
-        command: this.config.mcpServerCommand,
-        args: this.config.mcpServerArgs,
-        cwd: this.config.cwd,
-        env: {
-          ...process.env,
-          ...this.config.env,
-          MCP_PROXY_INSTANCE: `mcp-proxy-${process.pid}-${Date.now()}`
-        }
-      },
-      readinessChecker,
-      restartTerminator,
-      spawner
-    );
-
-    // Crash handler will be set up after server starts in the start() method
 
     // Register signal handlers immediately in constructor to ensure they're always active
     // This is critical for proper cleanup even if start() is skipped
     this.registerHandlers();
-
-    // Setup hot reload
-    if (!this.config.buildCommand || !this.config.buildCommand.trim()) {
-      log.warn('No build command configured. Server will restart on file changes without building.');
-    } else {
-      log.info(`Build command: ${this.config.buildCommand}`);
-    }
-
-    const buildRunner = new BuildRunner(this.config.buildCommand, this.config.cwd);
-    const fileWatcher = new FileWatcher({
-      patterns: this.config.watchPattern,
-      cwd: this.config.cwd,
-      debounceMs: this.config.debounceMs
-    });
-
-    this.hotReload = new HotReload(buildRunner, fileWatcher);
   }
 
   public async start(): Promise<void> {

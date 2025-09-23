@@ -1,5 +1,6 @@
 /**
- * Simple MCP protocol message types for clarity in tests and usage
+ * Test utilities for creating MCP protocol messages.
+ * These are simplified message creators for use in tests.
  */
 
 // Initialize messages
@@ -8,7 +9,14 @@ export function createInitializeRequest(id: number | string): string {
     jsonrpc: '2.0',
     id,
     method: 'initialize',
-    params: { protocolVersion: '1.0' }
+    params: {
+      protocolVersion: '2024-11-05',
+      capabilities: {},
+      clientInfo: {
+        name: 'test-client',
+        version: '1.0.0'
+      }
+    }
   }) + '\n';
 }
 
@@ -25,6 +33,14 @@ export function createToolsListNotification(): string {
   return JSON.stringify({
     jsonrpc: '2.0',
     method: 'tools/list_changed'
+  }) + '\n';
+}
+
+export function createToolsListRequest(id: number | string): string {
+  return JSON.stringify({
+    jsonrpc: '2.0',
+    id,
+    method: 'tools/list'
   }) + '\n';
 }
 

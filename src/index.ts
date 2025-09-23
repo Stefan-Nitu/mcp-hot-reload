@@ -14,7 +14,7 @@
  * server restarts, and handles automatic rebuilding on file changes.
  */
 
-import { MCPProxy } from './mcp-proxy.js';
+import { MCPProxyFactory } from './factory/mcp-proxy-factory.js';
 import { ProxyConfig } from './types.js';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import * as path from 'path';
@@ -158,7 +158,7 @@ process.stdin.on('end', () => {
   process.exit(0);
 });
 
-const proxy = new MCPProxy(config);
+const proxy = MCPProxyFactory.create(config);
 proxy.start().catch(error => {
   log.error({ err: error }, 'Failed to start proxy');
   process.exit(1);

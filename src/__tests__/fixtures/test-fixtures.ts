@@ -22,6 +22,7 @@ export const PROXY_PATH = path.join(DIST_DIR, 'index.js');
 export const TEST_SERVERS = {
   ALL_CONTENT_TYPES: path.join(SERVERS_DIR, 'all-content-types-server.js'),
   CRASH_AFTER_INIT: path.join(SERVERS_DIR, 'crash-after-init-server.js'),
+  CRASH_ON_METHOD: path.join(SERVERS_DIR, 'crash-on-method-server.js'),
   EXIT_IMMEDIATELY: path.join(SERVERS_DIR, 'exit-immediately-server.js'),
   REAL_MCP: path.join(SERVERS_DIR, 'real-mcp-server.js'),
   SIGNAL_TEST: path.join(SERVERS_DIR, 'signal-test-server.js'),

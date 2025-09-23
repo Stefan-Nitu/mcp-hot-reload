@@ -8,7 +8,7 @@ import {
   createToolCallRequest,
   createNotification,
   createRequest
-} from '../../types/mcp-messages.js';
+} from '../../__tests__/utils/mcp-test-messages.js';
 
 /**
  * ProtocolHandler Test Suite
@@ -189,6 +189,63 @@ describe('ProtocolHandler', () => {
 
       // Assert - State reset
       expect(handler.getSessionState().initialized).toBe(false);
+    });
+
+    it('does not become initialized on error response', () => {
+      // FROM SessionTracker: Error responses shouldn't mark as initialized
+      // WHY: Only successful initialization should change state
+
+      // Arrange
+      handler.connectServer(serverConnection);
+      const initRequest = '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}\n';
+      const errorResponse = '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"Method not found"}}\n';
+
+      // Act
+      clientIn.write(initRequest);
+      (serverOut as PassThrough).write(errorResponse);
+
+      // Assert
+      expect(handler.getSessionState().initialized).toBe(false);
+    });
+
+    it('ignores initialize without ID', () => {
+      // FROM SessionTracker: Initialize without ID shouldn't be tracked
+      // WHY: Can't match response without ID
+
+      // Arrange
+      handler.connectServer(serverConnection);
+      const initNoId = '{"jsonrpc":"2.0","method":"initialize","params":{}}\n';
+
+      // Act
+      clientIn.write(initNoId);
+
+      // Assert - Should not track
+      expect(handler.getSessionState().initializeRequest).toBeNull();
+      expect(handler.getSessionState().initialized).toBe(false);
+    });
+
+    it('only becomes initialized with matching response ID', () => {
+      // FROM SessionTracker: Must match request ID
+      // WHY: Could have multiple concurrent requests
+
+      // Arrange
+      handler.connectServer(serverConnection);
+      const initRequest = '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}\n';
+      const wrongIdResponse = '{"jsonrpc":"2.0","id":99,"result":{"protocolVersion":"1.0"}}\n';
+      const correctResponse = '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"1.0"}}\n';
+
+      // Act
+      clientIn.write(initRequest);
+      (serverOut as PassThrough).write(wrongIdResponse);
+
+      // Assert - Wrong ID doesn't initialize
+      expect(handler.getSessionState().initialized).toBe(false);
+
+      // Act - Correct ID
+      (serverOut as PassThrough).write(correctResponse);
+
+      // Assert - Now initialized
+      expect(handler.getSessionState().initialized).toBe(true);
     });
   });
 

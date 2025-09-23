@@ -1,7 +1,10 @@
 import { Readable, Writable } from 'stream';
 import { ServerConnection } from '../process/server-connection.js';
-import { MessageParser } from '../messaging/parser.js';
 import { createLogger } from '../utils/logger.js';
+import { translateExitCondition } from '../utils/exit-code-translator.js';
+import { PriorityMessageQueue } from '../messaging/priority-queue.js';
+import { MessageBuffer } from '../messaging/message-buffer.js';
+import type { ParsedMessage } from '../types/mcp-types.js';
 
 const log = createLogger('protocol-handler');
 
@@ -9,20 +12,6 @@ interface SessionState {
   initialized: boolean;
   initializeRequest: string | null;
   pendingRequest: { id: any; method: string } | null;
-}
-
-// Keep it simple - just what we need
-interface ParsedMessage {
-  id?: any;
-  method?: string;
-  result?: any;
-  error?: any;
-  raw: string;
-}
-
-interface QueuedMessage {
-  message: ParsedMessage;
-  priority: number;
 }
 
 /**
@@ -37,9 +26,9 @@ export class ProtocolHandler {
   };
 
   private serverConnection: ServerConnection | null = null;
-  private parser = new MessageParser();
-  private messageQueue: QueuedMessage[] = [];
-  private partialMessage = '';
+  private messageQueue = new PriorityMessageQueue();
+  private clientBuffer = new MessageBuffer();
+  private serverBuffer = new MessageBuffer();
 
   // Event handlers
   private clientDataHandler: ((data: Buffer) => void) | null = null;
@@ -60,30 +49,11 @@ export class ProtocolHandler {
   }
 
   private handleClientData(data: Buffer): void {
-    const dataStr = data.toString();
-
-    // Handle potential partial messages
-    const fullData = this.partialMessage + dataStr;
-    const lines = fullData.split('\n');
-
-    // If data ends with newline, last element will be empty string
-    // Otherwise, it's a partial message to keep for next chunk
-    if (lines[lines.length - 1] === '') {
-      // Complete messages only
-      this.partialMessage = '';
-      lines.pop(); // Remove empty string
-    } else {
-      // Keep last incomplete line as partial
-      this.partialMessage = lines[lines.length - 1];
-      lines.pop(); // Remove partial from processing
-    }
+    const messages = this.clientBuffer.append(data.toString());
 
     // Process complete messages
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-
-      this.handleClientMessage(trimmed + '\n');
+    for (const message of messages) {
+      this.handleClientMessage(message);
     }
   }
 
@@ -151,17 +121,7 @@ export class ProtocolHandler {
   }
 
   private queueWithPriority(message: ParsedMessage): void {
-    const priority = this.getMessagePriority(message);
-    this.messageQueue.push({ message, priority });
-
-    // Keep queue sorted by priority (higher priority first)
-    this.messageQueue.sort((a, b) => b.priority - a.priority);
-  }
-
-  private getMessagePriority(message: ParsedMessage): number {
-    if (message.method === 'initialize') return 100;  // Highest
-    if (message.id !== undefined) return 50;          // Regular requests
-    return 10;                                         // Notifications (lowest)
+    this.messageQueue.add(message);
   }
 
   connectServer(connection: ServerConnection): void {
@@ -223,27 +183,23 @@ export class ProtocolHandler {
   }
 
   private handleServerData(data: Buffer): void {
-    const dataStr = data.toString();
-
-    // Parse response to track session state
-    try {
-      const lines = dataStr.split('\n');
-      for (const line of lines) {
-        if (!line.trim()) continue;
-
-        const response = JSON.parse(line);
-        this.updateSessionStateFromServer(response);
-      }
-    } catch (error) {
-      log.debug({ error }, 'Failed to parse server response');
-    }
-
-    // Forward to client
+    // Forward to client immediately
     if (this.clientOut.writable && !(this.clientOut as any).destroyed) {
       try {
         this.clientOut.write(data);
       } catch (error) {
         log.error({ error }, 'Failed to write to client');
+      }
+    }
+
+    // Also parse to track session state
+    const messages = this.serverBuffer.append(data.toString());
+    for (const message of messages) {
+      try {
+        const response = JSON.parse(message.trim());
+        this.updateSessionStateFromServer(response);
+      } catch (error) {
+        log.debug({ error }, 'Failed to parse server response');
       }
     }
   }
@@ -276,19 +232,15 @@ export class ProtocolHandler {
   private flushQueue(): void {
     if (!this.serverConnection?.stdin?.writable) return;
 
-    const toSend = [...this.messageQueue];
-    this.messageQueue = [];
+    const messages = this.messageQueue.flush();
 
-    // Sort by priority one more time to be sure (higher priority first)
-    toSend.sort((a, b) => b.priority - a.priority);
-
-    for (const { message } of toSend) {
+    for (const message of messages) {
       try {
         this.serverConnection.stdin.write(message.raw);
       } catch (error) {
         log.debug({ error }, 'Failed to flush message');
         // Re-queue failed message
-        this.messageQueue.push({ message, priority: this.getMessagePriority(message) });
+        this.messageQueue.add(message);
       }
     }
   }
@@ -340,34 +292,8 @@ export class ProtocolHandler {
   }
 
   private buildCrashErrorMessage(code: number | null, signal: NodeJS.Signals | null): string {
-    let errorMessage = 'MCP server process terminated unexpectedly';
-
-    if (signal === 'SIGSEGV') {
-      errorMessage += ' (segmentation fault - possible memory access violation)';
-    } else if (signal === 'SIGKILL') {
-      errorMessage += ' (killed forcefully - possible out of memory or manual termination)';
-    } else if (signal === 'SIGTERM') {
-      errorMessage += ' (terminated - process shutdown requested)';
-    } else if (signal === 'SIGINT') {
-      errorMessage += ' (interrupted - Ctrl+C or similar)';
-    } else if (signal) {
-      errorMessage += ` (signal: ${signal})`;
-    } else if (code === 1) {
-      errorMessage += ' (exit code 1 - general error, check server logs)';
-    } else if (code === 127) {
-      errorMessage += ' (exit code 127 - command not found)';
-    } else if (code === 130) {
-      errorMessage += ' (exit code 130 - terminated by Ctrl+C)';
-    } else if (code === 137) {
-      errorMessage += ' (exit code 137 - killed, possibly out of memory)';
-    } else if (code === 143) {
-      errorMessage += ' (exit code 143 - terminated by SIGTERM)';
-    } else if (code !== null && code !== 0) {
-      errorMessage += ` (exit code ${code})`;
-    }
-
-    errorMessage += '. Hot-reload will attempt to restart on next file change.';
-    return errorMessage;
+    const exitCondition = translateExitCondition(code, signal);
+    return `MCP server process terminated unexpectedly (${exitCondition}). Hot-reload will attempt to restart on next file change.`;
   }
 
   getSessionState(): SessionState {
@@ -375,7 +301,7 @@ export class ProtocolHandler {
   }
 
   getQueueSize(): number {
-    return this.messageQueue.length;
+    return this.messageQueue.size();
   }
 
   shutdown(): void {
@@ -393,7 +319,8 @@ export class ProtocolHandler {
       initializeRequest: null,
       pendingRequest: null
     };
-    this.messageQueue = [];
-    this.partialMessage = '';
+    this.messageQueue.clear();
+    this.clientBuffer.clear();
+    this.serverBuffer.clear();
   }
 }
