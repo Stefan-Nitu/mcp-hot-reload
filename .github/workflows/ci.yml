@@ -35,7 +35,7 @@ jobs:
       run: |
         test -f dist/index.js
         test -f dist/mcp-proxy.js
-        test -f dist/messaging/parser.js
-        test -f dist/session/tracker.js
+        test -f dist/protocol/protocol-handler.js
+        test -f dist/messaging/message-buffer.js
         test -f dist/hot-reload/file-watcher.js
         test -f dist/process/lifecycle.js
